@@ -1,0 +1,8 @@
+{
+  "name": "NotePilot",
+  "description": "An offline-first share vault for Reels, WhatsApp messages, and YouTube Shorts. Incorporates background Gemini deadline highlight confirmations and natural-language necessity search.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
