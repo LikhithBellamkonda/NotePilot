@@ -1,8 +1,6 @@
 # NotePilot 📓
 
-<div align="center">
-  <img src="https://raw.githubusercontent.com/LikhithBellamkonda/NotePilot/main/assets/banner.png" alt="NotePilot Banner" width="800"/>
-</div>
+
 
 ---
 

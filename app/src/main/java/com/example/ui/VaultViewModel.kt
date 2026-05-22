@@ -72,6 +72,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         prefs.edit().putBoolean("is_dnd_enabled", enabled).apply()
         _isDndModeEnabled.value = enabled
     }
+
+    private val _geminiApiKey = MutableStateFlow(prefs.getString("gemini_api_key", "") ?: "")
+    val geminiApiKey: StateFlow<String> = _geminiApiKey.asStateFlow()
+
+    fun setGeminiApiKey(key: String) {
+        prefs.edit().putString("gemini_api_key", key).apply()
+        _geminiApiKey.value = key
+        GeminiClient.customApiKey = key.ifBlank { null }
+    }
     
     // Core states
     val allItems: StateFlow<List<VaultItem>>
@@ -107,6 +116,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     val isGeneratingTags: StateFlow<Boolean> = _isGeneratingTags.asStateFlow()
 
     init {
+        // Initialize GeminiClient with saved custom API key if present
+        val savedKey = prefs.getString("gemini_api_key", "") ?: ""
+        if (savedKey.isNotEmpty()) {
+            GeminiClient.customApiKey = savedKey
+        }
+
         val database = AppDatabase.getDatabase(application)
         repository = VaultRepository(database.vaultDao())
         allItems = repository.allItems.stateIn(
@@ -114,15 +129,6 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
-
-        // Seed initial interesting content so the user is greeted with a complete product
-        viewModelScope.launch {
-            try {
-                repository.prePopulateIfNeeded()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to seed default content", e)
-            }
-        }
     }
 
     // Computed filtered items based on category, local text fuzzy search, and AI relevance mapping
@@ -344,34 +350,43 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         _sharedIncomingText.value = null
     }
 
-    suspend fun suggestTagsForContent(title: String, content: String): List<String> {
+    suspend fun suggestTagsForContent(title: String, content: String, notes: String): List<String> {
         _isGeneratingTags.value = true
         return try {
-            val suggested = GeminiClient.suggestTags(title, content)
-            suggested ?: getFallbackTags(title, content)
+            val suggested = GeminiClient.suggestTags(title, content, notes)
+            suggested ?: getFallbackTags(title, content, notes)
         } catch (e: Exception) {
-            getFallbackTags(title, content)
+            getFallbackTags(title, content, notes)
         } finally {
             _isGeneratingTags.value = false
         }
     }
 
-    private fun getFallbackTags(title: String, content: String): List<String> {
-        val combined = "$title $content".lowercase()
+    private fun getFallbackTags(title: String, content: String, notes: String): List<String> {
+        val combined = "$title $content $notes".lowercase()
         val tags = mutableSetOf<String>()
+        
+        // Dynamically extract words from the text body to make tags neat and highly relevant
+        val words = combined.split(Regex("[^a-zA-Z0-9#]+"))
+            .filter { it.length > 3 && it !in listOf("http", "https", "www", "com", "html", "html5", "video", "watch", "youtube", "instagram", "whatsapp", "gmail", "shared", "content", "vault", "saved") }
+            .take(15)
+        
+        tags.addAll(words)
+        
         if (combined.contains("reel") || combined.contains("instagram") || combined.contains("insta")) {
-            tags.addAll(listOf("instagram", "reel", "social", "viral", "video"))
-        } else if (combined.contains("short") || combined.contains("youtube") || combined.contains("yt")) {
-            tags.addAll(listOf("youtube", "shorts", "creator", "trending", "video"))
-        } else {
-            tags.addAll(listOf("chat", "whatsapp", "message", "conversations", "essential"))
+            tags.addAll(listOf("instagram", "reel", "social", "media"))
         }
-        if (combined.contains("kotlin") || combined.contains("code") || combined.contains("dev") || combined.contains("android") || combined.contains("study") || combined.contains("architecture")) {
-            tags.addAll(listOf("coding", "programming", "software", "study", "blueprint", "hackathon"))
-        } else {
-            tags.addAll(listOf("reference", "bookmark", "interest", "quickaccess", "useful", "general"))
+        if (combined.contains("short") || combined.contains("youtube") || combined.contains("yt")) {
+            tags.addAll(listOf("youtube", "shorts", "trending"))
         }
-        val defaultFillers = listOf("saved", "vault", "content", "share", "interactive", "smart", "gemini", "highlights", "stitch", "priority")
+        if (combined.contains("whatsapp") || combined.contains("chat") || combined.contains("message")) {
+            tags.addAll(listOf("whatsapp", "chat", "message"))
+        }
+        if (combined.contains("kotlin") || combined.contains("code") || combined.contains("dev") || combined.contains("android") || combined.contains("study") || combined.contains("program")) {
+            tags.addAll(listOf("coding", "programming", "android", "development"))
+        }
+        
+        val defaultFillers = listOf("reference", "bookmark", "interest", "quickaccess", "useful", "priority", "notes", "task", "scheduled", "timeline")
         var index = 0
         while (tags.size < 10 && index < defaultFillers.size) {
             tags.add(defaultFillers[index])
@@ -406,47 +421,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             kotlinx.coroutines.delay(1200)
 
             // Dynamic restoration from cloud backup
-            // If empty or populated with defaults, let's inject previous user items
+            // No hardcoded defaults are seeded; syncing is purely active
             val currentItems = allItems.value
-            if (currentItems.size <= 3) {
-                val pastItems = listOf(
-                    VaultItem(
-                        contentType = "REEL",
-                        title = "Mastering Compose Glassmorphic Design",
-                        contentOrUrl = "https://www.instagram.com/reels/compose_glassmorphism/",
-                        notes = "Prisimitic design layout details as requested in OmniFeed style guide.",
-                        tags = "design, interface, kotlin, glass",
-                        isHighlighted = true,
-                        hasDeadline = true,
-                        deadlineText = "Within 4 hours",
-                        deadlineConfirmStatus = "CONFIRMED"
-                    ),
-                    VaultItem(
-                        contentType = "WHATSAPP",
-                        title = "Task: Submit final presentation to developer inbox",
-                        contentOrUrl = "Submit presentation slides by tomorrow evening",
-                        notes = "Approaching WhatsApp deadline automatically caught by server-side Gemini.",
-                        tags = "work, task, study, urgent",
-                        isHighlighted = true,
-                        hasDeadline = true,
-                        deadlineText = "Tomorrow 6 PM",
-                        deadlineConfirmStatus = "CONFIRMED"
-                    ),
-                    VaultItem(
-                        contentType = "SHORT",
-                        title = "The Gemini Pro AI Advantage in Android development in 60s",
-                        contentOrUrl = "https://youtube.com/shorts/gemini_pro_sdk",
-                        notes = "Quick reference guide demonstrating smart contextual tag suggestions.",
-                        tags = "ai, coding, study, reference",
-                        isHighlighted = false,
-                        hasDeadline = false
-                    )
-                )
-                pastItems.forEach { repository.insertItem(it) }
-                _syncStatus.value = "Cloud Sync Active: Restored 3 past saved items successfully."
-            } else {
-                _syncStatus.value = "Cloud Sync Active: Synced ${currentItems.size} items securely with Google Cloud Storage."
-            }
+            _syncStatus.value = "Cloud Sync Active: Synced ${currentItems.size} items securely with Google Cloud Storage."
             _isSyncing.value = false
         }
     }

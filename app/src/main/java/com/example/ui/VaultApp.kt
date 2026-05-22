@@ -42,6 +42,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -2161,7 +2163,8 @@ fun AddContentDialog(
                                 isTagGenLoading = true
                                 val suggested = originalViewModel.suggestTagsForContent(
                                     title.ifBlank { "Smart Item" },
-                                    content.ifBlank { "General content details" }
+                                    content.ifBlank { "General content details" },
+                                    notes
                                 )
                                 if (suggested.isNotEmpty()) {
                                     tags = suggested.joinToString(", ")
@@ -2320,6 +2323,10 @@ fun NotePilotSettingsDialog(
     val isNotificationsEnabled by viewModel.isNotificationsEnabled.collectAsStateWithLifecycle()
     val priorTimeIndex by viewModel.priorTimeIndex.collectAsStateWithLifecycle()
     val isDndModeEnabled by viewModel.isDndModeEnabled.collectAsStateWithLifecycle()
+    val geminiApiKey by viewModel.geminiApiKey.collectAsStateWithLifecycle()
+
+    var localApiKey by remember { mutableStateOf(geminiApiKey) }
+    var isKeyVisible by remember { mutableStateOf(false) }
 
     val priorTimes = listOf("15m Alert", "1h Alert", "1d Alert", "3d Alert")
 
@@ -2548,10 +2555,53 @@ fun NotePilotSettingsDialog(
                     )
                 }
 
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                // Gemini AI API Key input section
+                Text(
+                    text = "Gemini AI API Configuration",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                OutlinedTextField(
+                    value = localApiKey,
+                    onValueChange = { localApiKey = it },
+                    label = { Text("Custom Gemini API Key") },
+                    placeholder = { Text("Paste AI Studio API Key (AI-...)") },
+                    visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
+                            Icon(
+                                imageVector = if (isKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = if (isKeyVisible) "Hide Key" else "Show Key"
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().testTag("settings_gemini_api_key"),
+                    shape = RoundedCornerShape(10.dp),
+                    singleLine = true
+                )
+
+                Text(
+                    text = if (localApiKey.isNotBlank()) "🟢 Custom API Key will be saved and used."
+                           else if (viewModel.isApiKeyConfigured()) "🟡 Using System Default Key (BuildConfig)."
+                           else "🔴 AI features disabled (No Key configured).",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (localApiKey.isNotBlank()) Color(0xFF25D366)
+                            else if (viewModel.isApiKeyConfigured()) Color(0xFFFFB300)
+                            else MaterialTheme.colorScheme.error
+                )
+
                 Spacer(modifier = Modifier.height(10.dp))
                 
                 Button(
-                    onClick = onDismiss,
+                    onClick = {
+                        viewModel.setGeminiApiKey(localApiKey)
+                        onDismiss()
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
