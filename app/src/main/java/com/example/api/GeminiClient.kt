@@ -39,11 +39,8 @@ object GeminiClient {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    @Volatile
-    var customApiKey: String? = null
-
     private fun getApiKey(): String {
-        return if (!customApiKey.isNullOrBlank()) customApiKey!! else BuildConfig.GEMINI_API_KEY
+        return BuildConfig.GEMINI_API_KEY
     }
 
     fun isApiKeyConfigured(): Boolean {
@@ -155,25 +152,18 @@ object GeminiClient {
         }
     }
 
-    suspend fun suggestTags(title: String, content: String, notes: String): List<String>? = withContext(Dispatchers.IO) {
+    suspend fun suggestTags(title: String, content: String): List<String>? = withContext(Dispatchers.IO) {
         if (!isApiKeyConfigured()) {
             return@withContext null
         }
 
         val prompt = """
-            You are a smart cataloging system. Suggest a list of MINIMUM 10 highly relevant, single-word organic search tags/keywords for the following saved content:
+            Suggest a list of MINIMUM 10 highly relevant, single-word organic search tags (comma-separated style or keyword categories) for the following saved post:
             
             Title: "$title"
             Content Body / link: "$content"
-            User Context Notes: "$notes"
             
-            Generate at least 10 specific, neat, single-word, lowercase keywords that describe the topics, technical terms, concepts, frameworks, or categories related directly to this content.
-            
-            CRITICAL RULES:
-            1. The tags must be highly relevant and specific to the actual content (e.g., if it is about Android UI, suggest tags like android, compose, ui, jetpack, kotlin, design).
-            2. Do NOT suggest generic cataloging filler words like: saved, vault, content, link, post, video, reel, short, chat, whatsapp, message, bookmarks, details, item, smart.
-            3. Do not include duplicate tags.
-            4. Each tag must be a single word (no spaces, no hyphens, no special characters).
+            Return exactly a list of minimum 10 keywords that would make it effortless for a user to retrieve this content under various categories (e.g., if it is coding, generate tags like coding, design, database, developer, tips, help, system; if it is about a deadline, include task, timeline, reminder, urgent). Avoid duplicate tags. 
             
             You MUST return your answer in this exact JSON format:
             {
@@ -188,7 +178,6 @@ object GeminiClient {
             val tagsList = mutableListOf<String>()
             for (i in 0 until jsonArray.length()) {
                 val tag = jsonArray.optString(i, "").trim().lowercase()
-                    .replace(Regex("[^a-z0-9]"), "") // clean it to be neat, single word
                 if (tag.isNotEmpty()) {
                     tagsList.add(tag)
                 }

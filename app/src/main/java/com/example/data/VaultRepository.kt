@@ -23,6 +23,6 @@ class VaultRepository(private val vaultDao: VaultDao) {
     }
 
     suspend fun prePopulateIfNeeded() {
-        // Database is clean by default. No hardcoded default content seeded.
+        // No hardcoded events as requested. Let database start empty.
     }
 }

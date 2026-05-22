@@ -34,12 +34,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent != null && intent.action == Intent.ACTION_SEND) {
-            if ("text/plain" == intent.type) {
-                intent.getStringExtra(Intent.EXTRA_TEXT)?.let { sharedText ->
-                    viewModel.handleSharedText(sharedText)
+        try {
+            if (intent != null && intent.action == Intent.ACTION_SEND) {
+                if (intent.type?.startsWith("text/") == true) {
+                    intent.getStringExtra(Intent.EXTRA_TEXT)?.let { sharedText ->
+                        viewModel.handleSharedText(sharedText)
+                    }
                 }
             }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error handling shared intent safely", e)
         }
     }
 }

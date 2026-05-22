@@ -21,7 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -42,8 +42,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,9 +80,37 @@ fun VaultApp(viewModel: VaultViewModel) {
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAddDeadlineDialog by remember { mutableStateOf(false) }
 
+    var showSplash by remember { mutableStateOf(true) }
+    var showCustomGoogleLoginDialog by remember { mutableStateOf(false) }
+
     // Navigation Tab state tracking
     var activeTab by remember { mutableStateOf("Feed") } // "Feed", "Search", "Alerts", "Profile"
     var selectedTopTab by remember { mutableStateOf("Activity") } // "Activity", "Deadlines", "System"
+
+    // Splash timeout of 1.5 seconds
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1600)
+        showSplash = false
+    }
+
+    // Interactive Notification permission launcher
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { _ -> }
+
+    LaunchedEffect(showSplash) {
+        if (!showSplash) {
+            try {
+                // Delay permission request until Activity has fully settled and reached idle RESUMED state
+                kotlinx.coroutines.delay(1200)
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    permissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
+                }
+            } catch (e: Throwable) {
+                android.util.Log.e("VaultApp", "Failed to launch permission request safely", e)
+            }
+        }
+    }
 
     // Automatic intent prefill detection
     LaunchedEffect(sharedIncomingText) {
@@ -93,7 +119,40 @@ fun VaultApp(viewModel: VaultViewModel) {
         }
     }
 
-    Scaffold(
+    if (showSplash) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xFF0C0C0D)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.example.R.drawable.img_note_pilot_logo_1779335751799),
+                    contentDescription = "NotePilot Logo",
+                    modifier = Modifier
+                        .size(100.dp)
+                        .clip(RoundedCornerShape(22.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+                Text(
+                    text = "NotePilot",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 25.sp,
+                    color = Color.White
+                )
+                Text(
+                    text = "Your Smart Notes & Deadlines Pilot",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+        }
+    } else {
+        Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -116,9 +175,23 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
+                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                            val greeting = when (hour) {
+                                in 5..11 -> "Good morning"
+                                in 12..16 -> "Good afternoon"
+                                in 17..21 -> "Good evening"
+                                else -> "Good night"
+                            }
+                            val nameLocal = googleUserName
+                            val displayName = if (isGoogleLoggedIn && !nameLocal.isNullOrBlank()) {
+                                nameLocal.split(" ").firstOrNull() ?: nameLocal
+                            } else {
+                                "User"
+                            }
                             Text(
-                                "Smart notes, deadlines & clips pilot",
-                                fontSize = 10.sp,
+                                "$greeting, $displayName!",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -206,7 +279,7 @@ fun VaultApp(viewModel: VaultViewModel) {
                 NavigationBarItem(
                     selected = activeTab == "Feed",
                     onClick = { activeTab = "Feed" },
-                    icon = { Icon(Icons.Default.List, "Feed Lists") },
+                    icon = { Icon(Icons.AutoMirrored.Filled.List, "Feed Lists") },
                     label = { Text("Feed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold) },
                     alwaysShowLabel = true,
                     colors = NavigationBarItemDefaults.colors(
@@ -478,7 +551,7 @@ fun VaultApp(viewModel: VaultViewModel) {
                                     value = searchQuery,
                                     onValueChange = { viewModel.updateSearchQuery(it) },
                                     placeholder = { Text("Fuzzy filter items and custom tags...", fontSize = 12.sp) },
-                                    leadingIcon = { Icon(Icons.Default.List, "Filter icon", modifier = Modifier.size(16.dp)) },
+                                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.List, "Filter icon", modifier = Modifier.size(16.dp)) },
                                     trailingIcon = {
                                         if (searchQuery.isNotEmpty()) {
                                             IconButton(onClick = { viewModel.updateSearchQuery("") }) {
@@ -755,6 +828,17 @@ fun VaultApp(viewModel: VaultViewModel) {
             }
         )
     }
+
+    if (showCustomGoogleLoginDialog) {
+        CustomGoogleLoginDialog(
+            onDismiss = { showCustomGoogleLoginDialog = false },
+            onConfirm = { email, name ->
+                viewModel.loginWithGoogle(email, name)
+                showCustomGoogleLoginDialog = false
+            }
+        )
+    }
+  }
 }
 
 /**
@@ -768,6 +852,8 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     
+    var showLocalCustomGoogleDialog by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -891,7 +977,7 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Default.ExitToApp, "Sign Out", modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.ExitToApp, "Sign Out", modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Sign Out", fontSize = 11.sp)
                         }
@@ -924,7 +1010,7 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
 
                         Button(
                             onClick = {
-                                viewModel.loginWithGoogle("likhithbellamkonda@gmail.com", "Likhith Bellamkonda")
+                                showLocalCustomGoogleDialog = true
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                             shape = RoundedCornerShape(10.dp),
@@ -977,6 +1063,16 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
             }
         }
     }
+
+    if (showLocalCustomGoogleDialog) {
+        CustomGoogleLoginDialog(
+            onDismiss = { showLocalCustomGoogleDialog = false },
+            onConfirm = { email, name ->
+                viewModel.loginWithGoogle(email, name)
+                showLocalCustomGoogleDialog = false
+            }
+        )
+    }
 }
 
 /**
@@ -995,7 +1091,7 @@ fun EmptyFeedPlaceholder(onAddClick: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(Icons.Default.List, "Empty list icon", modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f))
+            Icon(Icons.AutoMirrored.Filled.List, "Empty list icon", modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.25f))
             Text("Your Activity Feed is Empty", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
                 "Click Save Shared Content or share link fragments directly from Whatsapp, Instagram Reels or YouTube Shorts!",
@@ -2163,8 +2259,7 @@ fun AddContentDialog(
                                 isTagGenLoading = true
                                 val suggested = originalViewModel.suggestTagsForContent(
                                     title.ifBlank { "Smart Item" },
-                                    content.ifBlank { "General content details" },
-                                    notes
+                                    content.ifBlank { "General content details" }
                                 )
                                 if (suggested.isNotEmpty()) {
                                     tags = suggested.joinToString(", ")
@@ -2323,10 +2418,6 @@ fun NotePilotSettingsDialog(
     val isNotificationsEnabled by viewModel.isNotificationsEnabled.collectAsStateWithLifecycle()
     val priorTimeIndex by viewModel.priorTimeIndex.collectAsStateWithLifecycle()
     val isDndModeEnabled by viewModel.isDndModeEnabled.collectAsStateWithLifecycle()
-    val geminiApiKey by viewModel.geminiApiKey.collectAsStateWithLifecycle()
-
-    var localApiKey by remember { mutableStateOf(geminiApiKey) }
-    var isKeyVisible by remember { mutableStateOf(false) }
 
     val priorTimes = listOf("15m Alert", "1h Alert", "1d Alert", "3d Alert")
 
@@ -2555,53 +2646,10 @@ fun NotePilotSettingsDialog(
                     )
                 }
 
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
-
-                // Gemini AI API Key input section
-                Text(
-                    text = "Gemini AI API Configuration",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                OutlinedTextField(
-                    value = localApiKey,
-                    onValueChange = { localApiKey = it },
-                    label = { Text("Custom Gemini API Key") },
-                    placeholder = { Text("Paste AI Studio API Key (AI-...)") },
-                    visualTransformation = if (isKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = {
-                        IconButton(onClick = { isKeyVisible = !isKeyVisible }) {
-                            Icon(
-                                imageVector = if (isKeyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = if (isKeyVisible) "Hide Key" else "Show Key"
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("settings_gemini_api_key"),
-                    shape = RoundedCornerShape(10.dp),
-                    singleLine = true
-                )
-
-                Text(
-                    text = if (localApiKey.isNotBlank()) "🟢 Custom API Key will be saved and used."
-                           else if (viewModel.isApiKeyConfigured()) "🟡 Using System Default Key (BuildConfig)."
-                           else "🔴 AI features disabled (No Key configured).",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (localApiKey.isNotBlank()) Color(0xFF25D366)
-                            else if (viewModel.isApiKeyConfigured()) Color(0xFFFFB300)
-                            else MaterialTheme.colorScheme.error
-                )
-
                 Spacer(modifier = Modifier.height(10.dp))
                 
                 Button(
-                    onClick = {
-                        viewModel.setGeminiApiKey(localApiKey)
-                        onDismiss()
-                    },
+                    onClick = onDismiss,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp)
                 ) {
@@ -2813,6 +2861,123 @@ fun AddDeadlineDialog(
                         )
                     ) {
                         Text("Block & Save", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CustomGoogleLoginDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (email: String, name: String) -> Unit
+) {
+    var email by remember { mutableStateOf("likhithbellamkonda@gmail.com") }
+    var name by remember { mutableStateOf("Likhith Bellamkonda") }
+    var isEmailError by remember { mutableStateOf(false) }
+    var isNameError by remember { mutableStateOf(false) }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccountCircle,
+                        contentDescription = "Google authentication",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Text(
+                        text = "Sign in with Google",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+
+                Text(
+                    text = "Specify any Google/Gmail Account details below to log in, enable sync, and restore automatic backups.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = {
+                        name = it
+                        if (it.isNotBlank()) isNameError = false
+                    },
+                    label = { Text("Display Name / User Name") },
+                    isError = isNameError,
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = email,
+                    onValueChange = {
+                        email = it
+                        if (it.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(it).matches()) {
+                            isEmailError = false
+                        }
+                    },
+                    label = { Text("Google Account Email") },
+                    isError = isEmailError,
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("username@gmail.com") }
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Cancel")
+                    }
+
+                    Button(
+                        onClick = {
+                            if (name.isBlank()) {
+                                isNameError = true
+                            }
+                            if (email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+                                isEmailError = true
+                            }
+                            if (!isNameError && !isEmailError) {
+                                onConfirm(email, name)
+                            }
+                        },
+                        modifier = Modifier.weight(1.2f).testTag("custom_google_login_confirm_button"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("Sign In", fontWeight = FontWeight.Bold)
                     }
                 }
             }
