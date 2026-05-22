@@ -175,13 +175,6 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                            val greeting = when (hour) {
-                                in 5..11 -> "Good morning"
-                                in 12..16 -> "Good afternoon"
-                                in 17..21 -> "Good evening"
-                                else -> "Good night"
-                            }
                             val nameLocal = googleUserName
                             val displayName = if (isGoogleLoggedIn && !nameLocal.isNullOrBlank()) {
                                 nameLocal.split(" ").firstOrNull() ?: nameLocal
@@ -189,7 +182,7 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 "User"
                             }
                             Text(
-                                "$greeting, $displayName!",
+                                "Hello, $displayName!",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
