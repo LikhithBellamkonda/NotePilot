@@ -336,6 +336,15 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Delete all items (clear the entire vault)
+     */
+    fun deleteAll() {
+        viewModelScope.launch {
+            repository.deleteAll()
+        }
+    }
+
     fun handleSharedText(text: String?) {
         _sharedIncomingText.value = text
     }

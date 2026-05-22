@@ -79,6 +79,7 @@ fun VaultApp(viewModel: VaultViewModel) {
     var showHistoryTimeline by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showAddDeadlineDialog by remember { mutableStateOf(false) }
+    var showDeleteAllConfirmDialog by remember { mutableStateOf(false) }
 
     var showSplash by remember { mutableStateOf(true) }
     var showCustomGoogleLoginDialog by remember { mutableStateOf(false) }
@@ -175,14 +176,8 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )
-                            val nameLocal = googleUserName
-                            val displayName = if (isGoogleLoggedIn && !nameLocal.isNullOrBlank()) {
-                                nameLocal.split(" ").firstOrNull() ?: nameLocal
-                            } else {
-                                "User"
-                            }
                             Text(
-                                "Hello, $displayName!",
+                                "Hello",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -257,6 +252,19 @@ fun VaultApp(viewModel: VaultViewModel) {
                             contentDescription = "Preferences settings gear icon",
                             tint = MaterialTheme.colorScheme.primary
                         )
+                    }
+
+                    if (rawItemsList.isNotEmpty() && activeTab == "Feed") {
+                        IconButton(
+                            onClick = { showDeleteAllConfirmDialog = true },
+                            modifier = Modifier.testTag("delete_all_icon")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Clear all database content",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -817,6 +825,47 @@ fun VaultApp(viewModel: VaultViewModel) {
                     } catch (e: Exception) {
                         Toast.makeText(context, "Google Calendar app is not integrated or available.", Toast.LENGTH_SHORT).show()
                     }
+                }
+            }
+        )
+    }
+
+    if (showDeleteAllConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteAllConfirmDialog = false },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Confirm delete all icon",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text("Clear Entire Vault")
+                }
+            },
+            text = {
+                Text(
+                    "Are you absolutely sure you want to permanently delete all items, clips, and tracked deadlines? This action is completely irreversible."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteAll()
+                        showDeleteAllConfirmDialog = false
+                        Toast.makeText(context, "All vault contents removed successfully.", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Clear All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteAllConfirmDialog = false }) {
+                    Text("Cancel")
                 }
             }
         )
