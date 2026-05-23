@@ -30,6 +30,11 @@
                 <data android:mimeType="text/*" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name="com.example.receiver.DeadlineAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
     </application>
 
 </manifest>

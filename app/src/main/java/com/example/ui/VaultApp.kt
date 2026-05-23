@@ -1762,43 +1762,54 @@ fun VaultItemCard(
     val context = LocalContext.current
 
     // Styling configurations based on Type
-    val (typeIcon, typeLabel, categoryColor, cardBg) = when (item.contentType) {
-        "REEL" -> Quadruple(
-            Icons.Default.Share,
-            "Instagram Reel",
-            Color(0xFFE1306C),
-            MaterialTheme.colorScheme.surface
-        )
-        "WHATSAPP" -> Quadruple(
-            Icons.Default.Info,
-            "WhatsApp Msg",
-            Color(0xFF25D366),
-            MaterialTheme.colorScheme.surface
-        )
-        "SHORT" -> Quadruple(
-            Icons.Default.PlayArrow,
-            "YouTube Short",
-            Color(0xFFFF0000),
-            MaterialTheme.colorScheme.surface
-        )
-        "LINK" -> Quadruple(
-            Icons.Default.Share,
-            "Saved Link",
-            Color(0xFF1D9BF0),
-            MaterialTheme.colorScheme.surface
-        )
-        "DEADLINE" -> Quadruple(
+    val isDeadlineStyled = (item.hasDeadline && item.deadlineConfirmStatus == "CONFIRMED") || item.contentType == "DEADLINE"
+
+    val (typeIcon, typeLabel, categoryColor, cardBg) = if (isDeadlineStyled) {
+        Quadruple(
             Icons.Default.Notifications,
-            "Deadline Alert",
-            Color(0xFFE53935),
+            "Deadline Alert ⏰",
+            Color(0xFFE53935), // Urgent Red / Orange
             MaterialTheme.colorScheme.surface
         )
-        else -> Quadruple(
-            Icons.Default.Share,
-            "External Content",
-            MaterialTheme.colorScheme.secondary,
-            MaterialTheme.colorScheme.surface
-        )
+    } else {
+        when (item.contentType) {
+            "REEL" -> Quadruple(
+                Icons.Default.Share,
+                "Instagram Reel",
+                Color(0xFFE1306C),
+                MaterialTheme.colorScheme.surface
+            )
+            "WHATSAPP" -> Quadruple(
+                Icons.Default.Info,
+                "WhatsApp Msg",
+                Color(0xFF25D366),
+                MaterialTheme.colorScheme.surface
+            )
+            "SHORT" -> Quadruple(
+                Icons.Default.PlayArrow,
+                "YouTube Short",
+                Color(0xFFFF0000),
+                MaterialTheme.colorScheme.surface
+            )
+            "LINK" -> Quadruple(
+                Icons.Default.Share,
+                "Saved Link",
+                Color(0xFF1D9BF0),
+                MaterialTheme.colorScheme.surface
+            )
+            "DEADLINE" -> Quadruple(
+                Icons.Default.Notifications,
+                "Deadline Alert",
+                Color(0xFFE53935),
+                MaterialTheme.colorScheme.surface
+            )
+            else -> Quadruple(
+                Icons.Default.Share,
+                "External Content",
+                MaterialTheme.colorScheme.secondary,
+                MaterialTheme.colorScheme.surface
+            )
+        }
     }
 
     val formattedDate = remember(item.timestamp) {
@@ -1990,7 +2001,7 @@ fun VaultItemCard(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (item.contentType == "WHATSAPP") Color(0xFFE8F8EE) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
+                        containerColor = if (item.contentType == "WHATSAPP" && !isDeadlineStyled) Color(0xFFE8F8EE) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
                     ),
                     shape = RoundedCornerShape(10.dp, 10.dp, 10.dp, 2.dp)
                 ) {
@@ -2877,7 +2888,7 @@ fun AddDeadlineDialog(
     var deadlineText by remember { mutableStateOf("") }
     var contentOrUrl by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
-    var blockOnCalendar by remember { mutableStateOf(true) }
+    var blockOnCalendar by remember { mutableStateOf(false) }
 
     var isTitleError by remember { mutableStateOf(false) }
     var isDeadlineError by remember { mutableStateOf(false) }
@@ -3066,7 +3077,7 @@ fun AddDeadlineDialog(
                             containerColor = MaterialTheme.colorScheme.primary
                         )
                     ) {
-                        Text("Block & Save", fontWeight = FontWeight.Bold)
+                        Text(if (blockOnCalendar) "Block & Save" else "Save Deadline", fontWeight = FontWeight.Bold)
                     }
                 }
             }

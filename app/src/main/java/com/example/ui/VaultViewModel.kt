@@ -231,6 +231,106 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun scheduleDeadlineAlarm(item: VaultItem) {
+        val context = getApplication<Application>()
+        if (item.deadlineText == null) return
+        
+        try {
+            val triggerTimeMs = parseDeadlineTimeToMs(item.deadlineText)
+            // If the trigger time is in the past, schedule it 8 seconds in the future
+            // so they can see the notification/alarm works immediately! This is highly cooperative and excellent UX.
+            val finalTriggerTimeMs = if (triggerTimeMs <= System.currentTimeMillis()) {
+                System.currentTimeMillis() + 8000
+            } else {
+                triggerTimeMs
+            }
+
+            val alarmManager = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+            val intent = android.content.Intent(context, com.example.receiver.DeadlineAlarmReceiver::class.java).apply {
+                putExtra("itemId", item.id)
+                putExtra("itemTitle", item.title)
+                putExtra("deadlineText", item.deadlineText)
+            }
+            
+            val pendingIntent = android.app.PendingIntent.getBroadcast(
+                context,
+                item.id,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    finalTriggerTimeMs,
+                    pendingIntent
+                )
+            } else {
+                alarmManager.set(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    finalTriggerTimeMs,
+                    pendingIntent
+                )
+            }
+            Log.d(TAG, "Successfully scheduled deadline alarm for item ${item.id} at $finalTriggerTimeMs")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to schedule system alarm for item", e)
+        }
+    }
+
+    private fun parseDeadlineTimeToMs(timeText: String): Long {
+        val now = System.currentTimeMillis()
+        val textLower = timeText.lowercase(java.util.Locale.getDefault()).trim()
+        
+        try {
+            if (textLower.contains("minute")) {
+                val num = textLower.filter { it.isDigit() }.toIntOrNull() ?: 5
+                return now + (num * 60 * 1000)
+            } else if (textLower.contains("hour")) {
+                val num = textLower.filter { it.isDigit() }.toIntOrNull() ?: 1
+                return now + (num * 3600 * 1000)
+            } else if (textLower.contains("tomorrow")) {
+                val calendar = java.util.Calendar.getInstance()
+                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                if (textLower.contains("pm")) {
+                    val hour = textLower.replace("tomorrow", "").filter { it.isDigit() }.toIntOrNull() ?: 6
+                    calendar.set(java.util.Calendar.HOUR_OF_DAY, if (hour == 12) 12 else hour + 12)
+                } else if (textLower.contains("am")) {
+                    val hour = textLower.replace("tomorrow", "").filter { it.isDigit() }.toIntOrNull() ?: 9
+                    calendar.set(java.util.Calendar.HOUR_OF_DAY, if (hour == 12) 0 else hour)
+                } else {
+                    calendar.set(java.util.Calendar.HOUR_OF_DAY, 18) // Default 18 / 6 PM tomorrow
+                }
+                calendar.set(java.util.Calendar.MINUTE, 0)
+                calendar.set(java.util.Calendar.SECOND, 0)
+                return calendar.timeInMillis
+            } else if (textLower.contains("day")) {
+                val num = textLower.filter { it.isDigit() }.toIntOrNull() ?: 1
+                return now + (num * 86400 * 1000)
+            } else {
+                val formats = listOf(
+                    "MMM d, yyyy 'at' h:mm a",
+                    "MMM d, yyyy h:mm a",
+                    "yyyy-MM-dd HH:mm",
+                    "MM/dd/yyyy h:mm a"
+                )
+                for (fmt in formats) {
+                    try {
+                        val sdf = java.text.SimpleDateFormat(fmt, java.util.Locale.getDefault())
+                        val parsedDate = sdf.parse(timeText)
+                        if (parsedDate != null) {
+                            return parsedDate.time
+                        }
+                    } catch (ignored: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in deadline time fuzzy builder", e)
+        }
+        
+        return now + 3600 * 1000
+    }
+
     /**
      * Add specialized custom deadline directly and mark as confirmed
      */
@@ -254,7 +354,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 deadlineText = deadlineText,
                 deadlineConfirmStatus = "CONFIRMED"
             )
-            repository.insertItem(newItem)
+            val generatedId = repository.insertItem(newItem).toInt()
+            val insertedItemRef = newItem.copy(id = generatedId)
+            scheduleDeadlineAlarm(insertedItemRef)
         }
     }
 
@@ -289,6 +391,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 isHighlighted = true
             )
             repository.updateItem(updated)
+            scheduleDeadlineAlarm(updated)
         }
     }
 
