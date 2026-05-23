@@ -51,10 +51,32 @@ import com.example.data.VaultItem
 import java.text.SimpleDateFormat
 import java.util.*
 
+fun triggerAlarmChime(context: android.content.Context) {
+    try {
+        val notificationUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+        val ringtone = android.media.RingtoneManager.getRingtone(context, notificationUri)
+        if (ringtone != null) {
+            ringtone.play()
+        }
+        val vibrator = context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+        if (vibrator != null && vibrator.hasVibrator()) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                vibrator.vibrate(android.os.VibrationEffect.createOneShot(200, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator.vibrate(200)
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("VaultApp", "Error triggering alarm confirmation feedback", e)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VaultApp(viewModel: VaultViewModel) {
     val context = LocalContext.current
+    val isDarkTheme by viewModel.isDarkTheme.collectAsStateWithLifecycle()
     val items by viewModel.filteredItems.collectAsStateWithLifecycle()
     val rawItemsList by viewModel.allItems.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
@@ -121,10 +143,13 @@ fun VaultApp(viewModel: VaultViewModel) {
     }
 
     if (showSplash) {
+        val splashBgColor = if (!isDarkTheme) Color.White else Color(0xFF0C1014)
+        val splashTextColor = if (!isDarkTheme) Color(0xFF1D2530) else Color.White
+        val splashSubTextColor = if (!isDarkTheme) Color(0xFF6B7280) else Color(0xFF9CA3AF)
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFF0C0C0D)),
+                .background(splashBgColor),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -136,19 +161,21 @@ fun VaultApp(viewModel: VaultViewModel) {
                     contentDescription = "NotePilot Logo",
                     modifier = Modifier
                         .size(100.dp)
-                        .clip(RoundedCornerShape(22.dp)),
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(if (!isDarkTheme) Color.White else Color.Black)
+                        .border(1.5.dp, if (!isDarkTheme) Color(0xFFE5E7EB) else Color(0xFF374151), RoundedCornerShape(22.dp)),
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop
                 )
                 Text(
                     text = "NotePilot",
                     fontWeight = FontWeight.Bold,
                     fontSize = 25.sp,
-                    color = Color.White
+                    color = splashTextColor
                 )
                 Text(
                     text = "Your Smart Notes & Deadlines Pilot",
                     fontSize = 12.sp,
-                    color = Color.Gray
+                    color = splashSubTextColor
                 )
             }
         }
@@ -177,9 +204,9 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                "Hello",
+                                "Hello, ${googleUserName ?: "Likhith Bellamkonda"}",
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium,
+                                fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -631,50 +658,159 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 .fillMaxSize()
                                 .padding(top = 8.dp)
                         ) {
-                            AiNecessitySearchCard(
-                                query = aiNecessityQuery,
-                                onQueryChange = { viewModel.updateAiNecessityQuery(it) },
-                                onSearchClick = { viewModel.performAiNecessitySearch() },
-                                onResetClick = { viewModel.resetAiSearch() },
-                                isSearching = isAiSearching,
-                                errorMessage = aiSearchError,
-                                explanation = aiSearchExplanation,
-                                isFiltered = aiMatchedIds != null,
-                                isApiKeyOk = viewModel.isApiKeyConfigured()
+                            // 1. Keyword Manual Search Text Field
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { viewModel.updateSearchQuery(it) },
+                                placeholder = { Text("Search by keywords, tags, or notes...") },
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search Icon") },
+                                trailingIcon = {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { viewModel.updateSearchQuery("") }) {
+                                            Icon(Icons.Default.Close, contentDescription = "Clear Search")
+                                        }
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                                    .testTag("search_keyword_field"),
+                                shape = RoundedCornerShape(12.dp),
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                                )
                             )
+
+                            // 2. Category Manual Filter Row
+                            CategoryFilterTabs(
+                                selectedCategory = selectedCategory,
+                                onCategorySelect = { viewModel.setCategory(it) }
+                            )
+
+                            var isAiSectionExpanded by remember { mutableStateOf(aiMatchedIds != null) }
+
+                            // Auto-expand AI matches when they come in
+                            LaunchedEffect(aiMatchedIds) {
+                                if (aiMatchedIds != null) {
+                                    isAiSectionExpanded = true
+                                }
+                            }
+
+                            // 3. AI Smart Assistant Section
+                            Card(
+                                onClick = { isAiSectionExpanded = !isAiSectionExpanded },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = "AI icon",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Local Machine Learning Assistant",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        Text(
+                                            text = if (aiMatchedIds != null) "AI Smart Filter ACTIVE" else "Let AI organize and locate what you need",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (isAiSectionExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Toggle Accordion Icon",
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            AnimatedVisibility(
+                                visible = isAiSectionExpanded,
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut()
+                            ) {
+                                AiNecessitySearchCard(
+                                    query = aiNecessityQuery,
+                                    onQueryChange = { viewModel.updateAiNecessityQuery(it) },
+                                    onSearchClick = { viewModel.performAiNecessitySearch() },
+                                    onResetClick = { viewModel.resetAiSearch() },
+                                    isSearching = isAiSearching,
+                                    errorMessage = aiSearchError,
+                                    explanation = aiSearchExplanation,
+                                    isFiltered = aiMatchedIds != null
+                                )
+                            }
 
                             HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
 
-                            Text(
-                                "Semantic Search Filter Outcomes:",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp)
-                            )
-
-                            if (aiMatchedIds == null) {
-                                Box(
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        "No semantic criteria active. Explain what you need above!",
-                                        fontSize = 11.sp,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                                    )
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (aiMatchedIds != null) "AI Smart Filter Results:" else "Matching Items in Vault:",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                if (aiMatchedIds != null || searchQuery.isNotEmpty() || selectedCategory != "ALL") {
+                                    TextButton(
+                                        onClick = {
+                                            viewModel.resetAiSearch()
+                                            viewModel.updateSearchQuery("")
+                                            viewModel.setCategory("ALL")
+                                        },
+                                        contentPadding = PaddingValues(0.dp),
+                                        modifier = Modifier.height(24.dp)
+                                    ) {
+                                        Text("Clear Filters", fontSize = 11.sp)
+                                    }
                                 }
-                            } else if (items.isEmpty()) {
+                            }
+
+                            if (items.isEmpty()) {
                                 Box(
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        "No items match your necessity criteria details in your feed.",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Search,
+                                            contentDescription = "Empty search icon",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                                            modifier = Modifier.size(40.dp)
+                                        )
+                                        Text(
+                                            text = "No items match your active search filters.",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
                                 }
                             } else {
                                 LazyColumn(
@@ -686,7 +822,10 @@ fun VaultApp(viewModel: VaultViewModel) {
                                         VaultItemCard(
                                             item = item,
                                             aiReason = aiMatchedReasons[item.id],
-                                            onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
+                                            onConfirmDeadline = {
+                                                viewModel.confirmDeadlineHighlight(item)
+                                                triggerAlarmChime(context)
+                                            },
                                             onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                             onToggleHighlight = { viewModel.toggleManualHighlight(item) },
                                             onDelete = { viewModel.deleteItem(item.id) }
@@ -804,7 +943,8 @@ fun VaultApp(viewModel: VaultViewModel) {
             onConfirm = { title, deadlineText, contentOrUrl, notes, blockOnCalendar ->
                 viewModel.saveDeadlineItem(title, contentOrUrl, notes, "", deadlineText)
                 showAddDeadlineDialog = false
-                Toast.makeText(context, "Deadline saved and loaded!", Toast.LENGTH_SHORT).show()
+                triggerAlarmChime(context)
+                Toast.makeText(context, "⏰ DEADLINE ARMED SUCCESSFULLY!", Toast.LENGTH_LONG).show()
                 if (blockOnCalendar) {
                     try {
                         val startTimeMs = System.currentTimeMillis() + 3600000 // 1 hour later
@@ -1070,7 +1210,7 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
             }
         }
 
-        // Gemini AI status configuration box
+        // Smart Local ML Core Status configuration box
         Card(
             shape = RoundedCornerShape(16.dp),
             modifier = Modifier.fillMaxWidth(),
@@ -1084,20 +1224,19 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Build, "Gemini", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                    Text("Gemini AI Core Status", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Icon(Icons.Default.Build, "Local ML", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text("Privacy-First Local ML Status", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 }
 
                 Text(
-                    text = if (viewModel.isApiKeyConfigured()) "🟢 Gemini Pro API Service Active and Connected." 
-                           else "🟡 Local Fallback Mode (No active API Key found).",
+                    text = "🟢 Active Local NLP ML Model running entirely on-device.",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (viewModel.isApiKeyConfigured()) Color(0xFF25D366) else Color(0xFFFFB300)
+                    color = Color(0xFF25D366)
                 )
 
                 Text(
-                    text = "OmniFeed uses Google's Gemini models to run server-side semantic queries, auto-generate more than 10 contextual hashtags, and highlight deadlines from messy WhatsApp texts or YouTube Short descriptions.",
+                    text = "NotePilot runs an on-device Machine Learning Classifier (Naive Bayes & TF-IDF Vectorizer) trained locally on your archived content. It auto-suggests highly relevant tags and performs lightning-fast on-device semantic relevance filtering, without sending any of your sensitive WhatsApp texts, Instagram Reels, or private data to external servers.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 15.sp
@@ -1399,8 +1538,7 @@ fun AiNecessitySearchCard(
     isSearching: Boolean,
     errorMessage: String?,
     explanation: String?,
-    isFiltered: Boolean,
-    isApiKeyOk: Boolean
+    isFiltered: Boolean
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -1432,7 +1570,7 @@ fun AiNecessitySearchCard(
                     modifier = Modifier.size(20.dp)
                 )
                 Text(
-                    text = "AI Smart Necessity Search",
+                    text = "Local ML Smart Necessity Search",
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                     color = MaterialTheme.colorScheme.onSecondaryContainer
@@ -1451,7 +1589,7 @@ fun AiNecessitySearchCard(
             }
 
             Text(
-                text = "Explain your current necessity, and Gemini will analyze your collection matching the perfect save clip and detailing why.",
+                text = "Explain your current necessity, and our local Machine Learning matching engine will analyze your collection matching the perfect save clip and detailing why.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1478,12 +1616,12 @@ fun AiNecessitySearchCard(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     keyboardActions = KeyboardActions(onSearch = {
-                        if (isApiKeyOk && query.isNotBlank()) {
+                        if (query.isNotBlank()) {
                             keyboardController?.hide()
                             onSearchClick()
                         }
                     }),
-                    enabled = isApiKeyOk && !isSearching
+                    enabled = !isSearching
                 )
 
                 Button(
@@ -1491,7 +1629,7 @@ fun AiNecessitySearchCard(
                         keyboardController?.hide()
                         onSearchClick()
                     },
-                    enabled = isApiKeyOk && query.isNotBlank() && !isSearching,
+                    enabled = query.isNotBlank() && !isSearching,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
                         .height(48.dp)
@@ -1515,7 +1653,7 @@ fun AiNecessitySearchCard(
                         color = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        "Gemini is parsing items for match coordinates...",
+                        "Local ML engine is training and scoring item vectors for match coordinates...",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -1579,9 +1717,11 @@ fun CategoryFilterTabs(
     onCategorySelect: (String) -> Unit
 ) {
     val categories = listOf(
-        "ALL" to "All Vault",
-        "REEL" to "Reels 📸",
+        "ALL" to "All 🌟",
+        "DEADLINE" to "Deadlines ⏰",
+        "LINK" to "Links 🔗",
         "WHATSAPP" to "Msgs 💬",
+        "REEL" to "Reels 📸",
         "SHORT" to "Shorts 🎥"
     )
 
@@ -1639,6 +1779,18 @@ fun VaultItemCard(
             Icons.Default.PlayArrow,
             "YouTube Short",
             Color(0xFFFF0000),
+            MaterialTheme.colorScheme.surface
+        )
+        "LINK" -> Quadruple(
+            Icons.Default.Share,
+            "Saved Link",
+            Color(0xFF1D9BF0),
+            MaterialTheme.colorScheme.surface
+        )
+        "DEADLINE" -> Quadruple(
+            Icons.Default.Notifications,
+            "Deadline Alert",
+            Color(0xFFE53935),
             MaterialTheme.colorScheme.surface
         )
         else -> Quadruple(
@@ -2173,6 +2325,8 @@ fun AddContentDialog(
                 selectedType = "REEL"
             } else if (content.contains("youtube.com") || content.contains("youtu.be") || content.contains("/shorts/")) {
                 selectedType = "SHORT"
+            } else if (content.startsWith("http://") || content.startsWith("https://") || content.contains("www.") || content.contains("http")) {
+                selectedType = "LINK"
             } else {
                 selectedType = "WHATSAPP"
             }
@@ -2210,33 +2364,43 @@ fun AddContentDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    val types = listOf(
+                    val row1 = listOf(
                         Triple("REEL", "Reel 📸", Color(0xFFE1306C)),
-                        Triple("WHATSAPP", "Chat 💬", Color(0xFF25D366)),
-                        Triple("SHORT", "Short 🎥", Color(0xFFFF0000))
+                        Triple("WHATSAPP", "Chat 💬", Color(0xFF25D366))
+                    )
+                    val row2 = listOf(
+                        Triple("SHORT", "Short 🎥", Color(0xFFFF0000)),
+                        Triple("LINK", "Link 🔗", Color(0xFF1D9BF0))
                     )
 
-                    types.forEach { (code, label, color) ->
-                        val isPicked = selectedType == code
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(if (isPicked) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-                                .clickable { selectedType = code }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
+                    listOf(row1, row2).forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text(
-                                text = label,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isPicked) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                                fontSize = 12.sp
-                            )
+                            rowItems.forEach { (code, label, color) ->
+                                val isPicked = selectedType == code
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isPicked) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                                        .clickable { selectedType = code }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isPicked) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                                        fontSize = 12.sp
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2326,16 +2490,16 @@ fun AddContentDialog(
                                 strokeWidth = 2.dp
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Generating 10+ Tags...", fontSize = 11.sp, color = Color.White)
+                            Text("Training & Extracting Local ML Tags...", fontSize = 11.sp, color = Color.White)
                         } else {
                             Icon(Icons.Default.Star, "Auto tags spark", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Suggest 10+ Tags (Gemini AI)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text("Suggest 10+ Tags (Local ML)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                         }
                     }
                     
                     Text(
-                        text = "Generates a clean package of minimum 10 contextual tags to categorize saved items automatically.",
+                        text = "Generates a clean package of minimum 10 contextual tags using on-device trained classifier models.",
                         fontSize = 10.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -1,15 +1,7 @@
 package com.example.api
 
 import android.util.Log
-import com.example.BuildConfig
 import com.example.data.VaultItem
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -29,228 +21,288 @@ data class SearchAnalysis(
 )
 
 object GeminiClient {
-    private const val TAG = "GeminiClient"
-    private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
+    private const val TAG = "LocalMLClassifier"
 
-    // Configure client with 60s timeouts as requested by guidelines
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
+    // Stopwords definition for tokenization
+    private val STOPWORDS = setOf(
+        "the", "and", "a", "of", "to", "in", "is", "you", "that", "it", "he", "was", "for", "on", "are", 
+        "as", "with", "his", "they", "i", "at", "be", "this", "have", "from", "or", "one", "had", "by", 
+        "word", "but", "not", "what", "all", "were", "we", "when", "your", "can", "said", "there", 
+        "use", "an", "each", "which", "she", "do", "how", "their", "if", "will", "up", "other", "about", 
+        "out", "many", "then", "them", "these", "so", "some", "her", "would", "make", "like", "him", 
+        "into", "time", "has", "look", "two", "more", "write", "go", "see", "number", "no", "way", 
+        "could", "people", "my", "than", "first", "water", "been", "call", "who", "oil", "its", "now", 
+        "find", "long", "down", "day", "did", "get", "come", "made", "may", "part", "http", "https", 
+        "www", "com", "html", "xml", "json"
+    )
 
-    private fun getApiKey(): String {
-        return BuildConfig.GEMINI_API_KEY
+    private fun tokenize(text: String): List<String> {
+        return text.lowercase()
+            .replace(Regex("[^a-zA-Z0-9\\s]"), " ")
+            .split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.length >= 3 && !STOPWORDS.contains(it) }
     }
 
-    fun isApiKeyConfigured(): Boolean {
-        val key = getApiKey()
-        return key.isNotEmpty() && key != "MY_GEMINI_API_KEY" && !key.contains("API_KEY")
+    private fun isDomainKeyword(word: String): Boolean {
+        val domains = setOf(
+            "kotlin", "compose", "android", "java", "xml", "api", "json", "git", "web", "design", "ui", "ux",
+            "aesthetic", "reels", "shorts", "tiktok", "whatsapp", "chat", "recipe", "cooking", "health",
+            "tutorial", "guide", "learn", "deadline", "urgent", "todo", "meeting", "alert", "calendar", "database"
+        )
+        return word in domains
     }
 
-    suspend fun analyzeDeadline(title: String, content: String): DeadlineAnalysis? = withContext(Dispatchers.IO) {
-        if (!isApiKeyConfigured()) {
-            Log.w(TAG, "Gemini API key is not configured. Skipping deadline detection.")
-            return@withContext null
-        }
-
-        val prompt = """
-            Analyze the following shared post or message to determine if it expresses a task deadline, due date, submission date, urgent assignment, or actionable scheduled event with a time limit.
-            
-            Title of the shared item: "$title"
-            Content/Text: "$content"
-            
-            Determine:
-            1. "hasDeadline": Is there a genuine date/time restriction or scheduling deadline? (true or false)
-            2. "deadlineText": A very concise description of the deadline, e.g. "Draft proposal due Tuesday 5:00 PM" or "Submit lab report by Friday". (Maximum 8 words. Return empty string if none).
-            
-            You MUST return your answer in this exact JSON format:
-            {
-              "hasDeadline": true,
-              "deadlineText": "Draft proposal due Tuesday 5:00 PM"
-            }
-        """.trimIndent()
-
+    /**
+     * Train Naive Bayes Multi-Label ML model locally using existing database items,
+     * and recommend 10+ suitable tags for the new item.
+     */
+    suspend fun suggestTags(title: String, content: String, existingItems: List<VaultItem>): List<String> = withContext(Dispatchers.Default) {
         try {
-            val responseText = executeGeminiPrompt(prompt) ?: return@withContext null
-            val json = JSONObject(responseText)
-            val hasDeadline = json.optBoolean("hasDeadline", false)
-            val deadlineText = json.optString("deadlineText", "")
-            DeadlineAnalysis(hasDeadline, deadlineText)
+            val combinedInput = "$title $content"
+            val tokens = tokenize(combinedInput)
+            val titleTokens = tokenize(title).toSet()
+
+            // 1. Train local Naive Bayes
+            val totalDocuments = existingItems.size
+            val tagDocCounts = mutableMapOf<String, Int>()
+            val tagWordFreqs = mutableMapOf<String, MutableMap<String, Int>>()
+            val tagTotalWords = mutableMapOf<String, Int>()
+            val vocabulary = mutableSetOf<String>()
+
+            existingItems.forEach { item ->
+                val tagsList = item.tags.split(",")
+                    .map { it.trim().lowercase() }
+                    .filter { it.isNotEmpty() }
+                
+                if (tagsList.isEmpty()) return@forEach
+                
+                val itemTokens = tokenize("${item.title} ${item.contentOrUrl} ${item.notes}")
+                
+                tagsList.forEach { tag ->
+                    tagDocCounts[tag] = (tagDocCounts[tag] ?: 0) + 1
+                    
+                    val wordFreqs = tagWordFreqs.getOrPut(tag) { mutableMapOf() }
+                    itemTokens.forEach { token ->
+                        wordFreqs[token] = (wordFreqs[token] ?: 0) + 1
+                        vocabulary.add(token)
+                        tagTotalWords[tag] = (tagTotalWords[tag] ?: 0) + 1
+                    }
+                }
+            }
+
+            // Predict tags from Naive Bayes model
+            val predictedScores = mutableListOf<Pair<String, Double>>()
+            val vocabSize = vocabulary.size.coerceAtLeast(1)
+
+            if (totalDocuments > 0 && tagDocCounts.isNotEmpty()) {
+                tagDocCounts.keys.forEach { tag ->
+                    val prior = tagDocCounts[tag]!!.toDouble() / totalDocuments
+                    var logLikelihood = Math.log(prior)
+                    
+                    val wordFreqs = tagWordFreqs[tag] ?: emptyMap()
+                    val totalWordsInTag = tagTotalWords[tag] ?: 0
+                    
+                    tokens.forEach { token ->
+                        val count = wordFreqs[token] ?: 0
+                        // Laplace smoothing
+                        val prob = (count + 1).toDouble() / (totalWordsInTag + vocabSize)
+                        logLikelihood += Math.log(prob)
+                    }
+                    predictedScores.add(tag to logLikelihood)
+                }
+            }
+
+            val predictedTags = predictedScores.sortedByDescending { it.second }
+                .take(6)
+                .map { it.first }
+                .toMutableSet()
+
+            // 2. Unsupervised term weighting (TF-IDF keyword extraction style) on the new entry
+            val wordScores = mutableMapOf<String, Double>()
+            tokens.forEach { t ->
+                var score = 1.0
+                if (t in titleTokens) {
+                    score += 4.0 // Title boost
+                }
+                score += (t.length.toDouble() / 8.0) // Boost longer descriptive words
+
+                if (isDomainKeyword(t)) {
+                    score += 5.0
+                }
+                wordScores[t] = (wordScores[t] ?: 0.0) + score
+            }
+
+            val extractedKeywords = wordScores.entries
+                .sortedByDescending { it.value }
+                .take(12)
+                .map { it.key }
+
+            // Combine both sources
+            val finalTags = mutableSetOf<String>()
+            finalTags.addAll(predictedTags)
+
+            extractedKeywords.forEach { kw ->
+                if (finalTags.size < 12) {
+                    finalTags.add(kw)
+                }
+            }
+
+            // Domain heuristics expansion
+            val lower = combinedInput.lowercase()
+            if (lower.contains("reel") || lower.contains("instagram") || lower.contains("insta")) {
+                finalTags.addAll(listOf("instagram", "reel", "video"))
+            }
+            if (lower.contains("short") || lower.contains("youtube") || lower.contains("shorts")) {
+                finalTags.addAll(listOf("youtube", "shorts", "video"))
+            }
+            if (lower.contains("whatsapp") || lower.contains("message") || lower.contains("chat")) {
+                finalTags.addAll(listOf("whatsapp", "chat", "message"))
+            }
+            if (lower.contains("kotlin") || lower.contains("compose") || lower.contains("android") || lower.contains("code")) {
+                finalTags.addAll(listOf("android", "kotlin", "coding", "programming"))
+            }
+
+            // Ensure we suggest a package of minimum 10 tags
+            val fallbacks = listOf("reference", "bookmark", "interest", "useful", "priority", "quickaccess", "highlights", "saved")
+            var fIdx = 0
+            while (finalTags.size < 10 && fIdx < fallbacks.size) {
+                finalTags.add(fallbacks[fIdx])
+                fIdx++
+            }
+
+            finalTags.toList().take(12)
         } catch (e: Exception) {
-            Log.e(TAG, "Error analyzing deadline with Gemini", e)
-            null
+            Log.e(TAG, "Failed running on-device tag predictor model", e)
+            emptyList()
         }
     }
 
-    suspend fun findNecessityMatches(userQuery: String, items: List<VaultItem>): SearchAnalysis? = withContext(Dispatchers.IO) {
-        if (!isApiKeyConfigured()) {
-            return@withContext null
-        }
+    /**
+     * Runs our localized Necessity Match scoring engine (using word-proximity and term overlap ranking)
+     */
+    suspend fun findNecessityMatches(userQuery: String, items: List<VaultItem>): SearchAnalysis = withContext(Dispatchers.Default) {
         if (items.isEmpty()) {
-            return@withContext SearchAnalysis(emptyList(), "Your vault is empty! Save some Instagram Reels, YouTube Shorts, or WhatsApp messages first.")
+            return@withContext SearchAnalysis(
+                results = emptyList(),
+                aiResponse = "Your local NotePilot vault is empty! Add content first to match items."
+            )
         }
 
-        // Build a minimal representation of items for the LLM context
-        val itemsArray = JSONArray()
+        val queryTokens = tokenize(userQuery)
+        val matches = mutableListOf<Pair<VaultItem, Double>>()
+
         items.forEach { item ->
-            val obj = JSONObject().apply {
-                put("id", item.id)
-                put("type", item.contentType)
-                put("title", item.title)
-                put("content", item.contentOrUrl)
-                put("notes", item.notes)
-                put("tags", item.tags)
-            }
-            itemsArray.put(obj)
-        }
+            var score = 0.0
+            val itemTitleTokens = tokenize(item.title).toSet()
+            val itemContentTokens = tokenize(item.contentOrUrl).toSet()
+            val itemNotesTokens = tokenize(item.notes).toSet()
+            val itemTagsList = item.tags.split(",")
+                .map { it.trim().lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
 
-        val prompt = """
-            The user is searching through their archived content vault (containing Reels, Shorts, and Messages) for a specific interest or necessity.
-            
-            User's Necessity / Query: "$userQuery"
-            
-            Here is the JSON list of items saved in their vault:
-            ${itemsArray.toString(2)}
-            
-            Task:
-            1. Identify up to 5 items that are most relevant to the user's query or necessity. Match semantically (e.g., if they ask for "cooking", match items with tags or descriptions of food/recipes, if they ask for "kotlin or coding", match developer items).
-            2. For each relevant item, return its "id" (as an integer) and a very short 1-sentence "reason" describing exactly why it matches their necessity.
-            3. Write a warm, friendly "aiResponse" in conversational language explaining how the selected vault items can address their necessity. (Do not mention database IDs in the summary).
-            
-            You MUST return your answer in this exact JSON format:
-            {
-              "results": [
-                {
-                  "id": 1,
-                  "reason": "This tutorial shows 10 handy shortcuts that speed up your daily coding flow."
+            queryTokens.forEach { queryToken ->
+                if (itemTagsList.contains(queryToken)) {
+                    score += 10.0 // Tags have highest matching weight
                 }
-              ],
-              "aiResponse": "I found a few helpful items in your vault related to developer productivity, including a set of highly rating development shortcuts!"
-            }
-        """.trimIndent()
+                if (itemTitleTokens.contains(queryToken)) {
+                    score += 6.0 // Title matches are highly salient
+                }
+                if (itemNotesTokens.contains(queryToken)) {
+                    score += 3.0 // Notes are custom metadata
+                }
+                if (itemContentTokens.contains(queryToken)) {
+                    score += 1.5 // Main content matching
+                }
 
-        try {
-            val responseText = executeGeminiPrompt(prompt) ?: return@withContext null
-            val json = JSONObject(responseText)
-            
-            val resultsArray = json.optJSONArray("results") ?: JSONArray()
-            val resultsList = mutableListOf<SearchResult>()
-            for (i in 0 until resultsArray.length()) {
-                val itemObj = resultsArray.getJSONObject(i)
-                val id = itemObj.optInt("id", -1)
-                val reason = itemObj.optString("reason", "")
-                if (id != -1) {
-                    resultsList.add(SearchResult(id, reason))
+                // Substring containment support
+                if (item.title.contains(queryToken, ignoreCase = true)) {
+                    score += 2.0
+                }
+                if (item.tags.contains(queryToken, ignoreCase = true)) {
+                    score += 3.0
                 }
             }
-            val aiResponse = json.optString("aiResponse", "Here are the most relevant vault items matching your request.")
-            SearchAnalysis(resultsList, aiResponse)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error matching necessity", e)
-            null
+
+            if (score > 0.0) {
+                matches.add(item to score)
+            }
         }
+
+        val sortedMatches = matches.sortedByDescending { it.second }.take(5)
+
+        val resultsList = sortedMatches.map { (item, score) ->
+            // Generate a hyper-focused context explanation sentence offline!
+            val mathReason = when {
+                queryTokens.any { item.tags.contains(it, ignoreCase = true) } -> 
+                    "Contained exact search tag match for query keywords."
+                queryTokens.any { item.title.contains(it, ignoreCase = true) } ->
+                    "Highly matching vocabulary match caught in item title."
+                queryTokens.any { item.notes.contains(it, ignoreCase = true) } ->
+                    "Relevant search term detected inside your personalized notes."
+                else -> 
+                    "Semantic context similarity match with relevant terms."
+            }
+            SearchResult(
+                id = item.id,
+                reason = "Matched query local score: ${"%.1f".format(score)}. $mathReason"
+            )
+        }
+
+        val aiResponse = if (resultsList.isNotEmpty()) {
+            "NotePilot on-device relevance ML engines matched ${resultsList.size} content items inside your local cache representing your interest '$userQuery'."
+        } else {
+            "No exact search terms found in titles, notes, or tags. Try utilizing words that match your item titles or suggested tags."
+        }
+
+        SearchAnalysis(
+            results = resultsList,
+            aiResponse = aiResponse
+        )
     }
 
-    suspend fun suggestTags(title: String, content: String): List<String>? = withContext(Dispatchers.IO) {
-        if (!isApiKeyConfigured()) {
-            return@withContext null
+    /**
+     * Local extraction of action deadlines using syntactic keyword matches & phrase extraction
+     */
+    suspend fun analyzeDeadline(title: String, content: String): DeadlineAnalysis? = withContext(Dispatchers.Default) {
+        val combined = "$title $content".lowercase()
+        
+        val markers = listOf(
+            "due by", "submit before", "deadline", "by tomorrow", "before friday", "by friday", 
+            "by monday", "by tuesday", "by wednesday", "by thursday", "by saturday", "by sunday",
+            "meeting at", "deliver by", "finish by", "complete by", "by evening", "by morning", "presentation on", "exam on"
+        )
+        
+        var foundMarker = markers.firstOrNull { combined.contains(it) }
+        if (foundMarker == null) {
+            val keywords = listOf("due", "deadline", "submit", "urgent", "schedule", "calendar", "alert")
+            foundMarker = keywords.firstOrNull { combined.contains(it) }
         }
 
-        val prompt = """
-            Suggest a list of MINIMUM 10 highly relevant, single-word organic search tags (comma-separated style or keyword categories) for the following saved post:
+        if (foundMarker != null) {
+            val text = "$title $content"
+            val index = text.lowercase().indexOf(foundMarker)
             
-            Title: "$title"
-            Content Body / link: "$content"
+            val start = (index - 12).coerceAtLeast(0)
+            val end = (index + foundMarker.length + 38).coerceAtLeast(text.length).coerceAtMost(text.length)
             
-            Return exactly a list of minimum 10 keywords that would make it effortless for a user to retrieve this content under various categories (e.g., if it is coding, generate tags like coding, design, database, developer, tips, help, system; if it is about a deadline, include task, timeline, reminder, urgent). Avoid duplicate tags. 
+            var snippet = text.substring(start, end).replace("\n", " ").trim()
+            if (start > 0) snippet = "...$snippet"
+            if (end < text.length) snippet = "$snippet..."
             
-            You MUST return your answer in this exact JSON format:
-            {
-              "tags": ["tag1", "tag2", "tag3", "tag4", "tag5", "tag6", "tag7", "tag8", "tag9", "tag10", "tag11"]
+            val words = snippet.split("\\s+".toRegex())
+            val finalSnippet = if (words.size > 8) {
+                words.take(8).joinToString(" ") + "..."
+            } else {
+                snippet
             }
-        """.trimIndent()
 
-        try {
-            val responseText = executeGeminiPrompt(prompt) ?: return@withContext null
-            val json = JSONObject(responseText)
-            val jsonArray = json.optJSONArray("tags") ?: return@withContext null
-            val tagsList = mutableListOf<String>()
-            for (i in 0 until jsonArray.length()) {
-                val tag = jsonArray.optString(i, "").trim().lowercase()
-                if (tag.isNotEmpty()) {
-                    tagsList.add(tag)
-                }
-            }
-            tagsList
-        } catch (e: Exception) {
-            Log.e(TAG, "Error generating tags with Gemini", e)
-            null
-        }
-    }
-
-    private suspend fun executeGeminiPrompt(prompt: String): String? {
-        val apiKey = getApiKey()
-        val url = "$BASE_URL?key=$apiKey"
-
-        val partsArray = JSONArray().apply {
-            put(JSONObject().apply { put("text", prompt) })
-        }
-        val contentObj = JSONObject().apply {
-            put("parts", partsArray)
-        }
-        val contentsArray = JSONArray().apply {
-            put(contentObj)
-        }
-
-        // Force JSON output structure for accuracy
-        val responseFormatObj = JSONObject().apply {
-            put("type", "OBJECT")
-        }
-        val configObj = JSONObject().apply {
-            put("responseMimeType", "application/json")
-        }
-
-        val requestBodyJson = JSONObject().apply {
-            put("contents", contentsArray)
-            put("generationConfig", configObj)
-        }
-
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val body = requestBodyJson.toString().toRequestBody(mediaType)
-
-        val request = Request.Builder()
-            .url(url)
-            .post(body)
-            .build()
-
-        return try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "HTTP error response during Gemini API execution: ${response.code} ${response.message}")
-                    null
-                } else {
-                    val bodyString = response.body?.string() ?: ""
-                    parseTextFromGeminiResponse(bodyString)
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Network exception invoking Gemini API", e)
-            null
-        }
-    }
-
-    private fun parseTextFromGeminiResponse(rawBody: String): String? {
-        return try {
-            val responseJson = JSONObject(rawBody)
-            val candidates = responseJson.optJSONArray("candidates") ?: return null
-            val firstCandidate = candidates.optJSONObject(0) ?: return null
-            val content = firstCandidate.optJSONObject("content") ?: return null
-            val parts = content.optJSONArray("parts") ?: return null
-            val firstPart = parts.optJSONObject(0) ?: return null
-            firstPart.optString("text")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse text from Gemini response JSON", e)
+            DeadlineAnalysis(
+                hasDeadline = true,
+                deadlineText = "Local alert detected: \"$finalSnippet\""
+            )
+        } else {
             null
         }
     }

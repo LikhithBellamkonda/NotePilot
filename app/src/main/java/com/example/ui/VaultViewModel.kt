@@ -154,10 +154,6 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = emptyList()
     )
 
-    fun isApiKeyConfigured(): Boolean {
-        return GeminiClient.isApiKeyConfigured()
-    }
-
     fun setCategory(category: String) {
         _selectedCategory.value = category
     }
@@ -180,7 +176,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * AI-Powered Natural Language Necessity Search
+     * Local ML-Powered Natural Language Necessity Search
      */
     fun performAiNecessitySearch() {
         val query = _aiNecessityQuery.value
@@ -195,16 +191,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 val snapshot = allItems.value
                 val analysis = GeminiClient.findNecessityMatches(query, snapshot)
                 
-                if (analysis != null) {
-                    val idsMap = analysis.results.associate { it.id to it.reason }
-                    _aiMatchedIds.value = idsMap.keys
-                    _aiMatchedReasons.value = idsMap
-                    _aiSearchExplanation.value = analysis.aiResponse
-                } else {
-                    _aiSearchError.value = "Unable to process semantic search. Please verify your internet connection or Gemini API Key."
-                }
+                val idsMap = analysis.results.associate { it.id to it.reason }
+                _aiMatchedIds.value = idsMap.keys
+                _aiMatchedReasons.value = idsMap
+                _aiSearchExplanation.value = analysis.aiResponse
             } catch (e: Exception) {
-                _aiSearchError.value = "An error occurred: ${e.localizedMessage}"
+                _aiSearchError.value = "An error occurred during local search classification: ${e.localizedMessage}"
             } finally {
                 _isAiSearching.value = false
             }
@@ -212,7 +204,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Add generic new content and trigger deadline check
+     * Add generic new content and trigger local ML deadline check
      */
     fun addNewVaultItem(
         contentType: String,
@@ -233,11 +225,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             // Insert item to database
             val generatedId = repository.insertItem(newItem).toInt()
             
-            // Trigger background AI deadline verification (only if API key is active)
-            if (isApiKeyConfigured()) {
-                val insertedItemRef = newItem.copy(id = generatedId)
-                triggerAiDeadlineDetection(insertedItemRef)
-            }
+            // Trigger background local ML deadline verification
+            val insertedItemRef = newItem.copy(id = generatedId)
+            triggerAiDeadlineDetection(insertedItemRef)
         }
     }
 
@@ -253,7 +243,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             val newItem = VaultItem(
-                contentType = "WHATSAPP", // categorized representing a custom chat/manual task note
+                contentType = "DEADLINE", // Beautiful specialized content type for custom deadlines!
                 title = title,
                 contentOrUrl = contentOrUrl,
                 notes = notes,
@@ -356,8 +346,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     suspend fun suggestTagsForContent(title: String, content: String): List<String> {
         _isGeneratingTags.value = true
         return try {
-            val suggested = GeminiClient.suggestTags(title, content)
-            suggested ?: getFallbackTags(title, content)
+            val suggested = GeminiClient.suggestTags(title, content, allItems.value)
+            suggested.ifEmpty { getFallbackTags(title, content) }
         } catch (e: Exception) {
             getFallbackTags(title, content)
         } finally {
