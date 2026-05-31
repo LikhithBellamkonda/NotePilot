@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -590,7 +591,7 @@ fun VaultApp(viewModel: VaultViewModel) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 16.dp, vertical = 6.dp)
-                                        .height(48.dp)
+                                        .height(56.dp)
                                         .testTag("fuzzy_search_input"),
                                     shape = RoundedCornerShape(10.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
@@ -606,43 +607,277 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 if (items.isEmpty()) {
                                     EmptyFeedPlaceholder { showAddDialog = true }
                                 } else {
-                                    LazyColumn(
-                                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        items(items, key = { it.id }) { item ->
-                                            VaultItemCard(
-                                                item = item,
-                                                aiReason = aiMatchedReasons[item.id],
-                                                onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
-                                                onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
-                                                onToggleHighlight = { viewModel.toggleManualHighlight(item) },
-                                                onDelete = { viewModel.deleteItem(item.id) }
-                                            )
+                                    val nonDeadlineItems = remember(items) {
+                                        items.filter { !it.hasDeadline && it.contentType != "DEADLINE" }
+                                    }
+                                    if (nonDeadlineItems.isEmpty()) {
+                                        EmptyFeedPlaceholder { showAddDialog = true }
+                                    } else {
+                                        LazyColumn(
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            items(nonDeadlineItems, key = { it.id }) { item ->
+                                                VaultItemCard(
+                                                    item = item,
+                                                    aiReason = aiMatchedReasons[item.id],
+                                                    onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
+                                                    onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
+                                                    onToggleHighlight = { viewModel.toggleManualHighlight(item) },
+                                                    onDelete = { viewModel.deleteItem(item.id) },
+                                                    onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
                             "Deadlines" -> {
-                                val activeDeadlines = rawItemsList.filter { it.hasDeadline && it.deadlineConfirmStatus != "DECLINED" }
-                                if (activeDeadlines.isEmpty()) {
-                                    EmptyDeadlinesPlaceholder()
-                                } else {
-                                    LazyColumn(
-                                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                                var deadlineTabMode by remember { mutableStateOf("AlertBoard") } // "AlertBoard" or "CalendarHistory"
+                                val deadlinesList = rawItemsList.filter { it.hasDeadline && it.deadlineConfirmStatus != "DECLINED" || it.contentType == "DEADLINE" }
+
+                                Column(
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
+                                    // Header Segmented Controls for Sub tabs
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
+                                            .padding(4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
-                                        items(activeDeadlines, key = { "dl_tab_${it.id}" }) { item ->
-                                            VaultItemCard(
-                                                item = item,
-                                                aiReason = null,
-                                                onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
-                                                onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
-                                                onToggleHighlight = { viewModel.toggleManualHighlight(item) },
-                                                onDelete = { viewModel.deleteItem(item.id) }
-                                            )
+                                        Button(
+                                            onClick = { deadlineTabMode = "AlertBoard" },
+                                            modifier = Modifier.weight(1f).height(32.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (deadlineTabMode == "AlertBoard") MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                contentColor = if (deadlineTabMode == "AlertBoard") Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Icon(Icons.Default.Notifications, null, modifier = Modifier.size(14.dp))
+                                                Text("Alert Board", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+
+                                        Button(
+                                            onClick = { deadlineTabMode = "CalendarHistory" },
+                                            modifier = Modifier.weight(1f).height(32.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (deadlineTabMode == "CalendarHistory") MaterialTheme.colorScheme.primary else Color.Transparent,
+                                                contentColor = if (deadlineTabMode == "CalendarHistory") Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                            ),
+                                            shape = RoundedCornerShape(8.dp),
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Icon(Icons.Default.DateRange, null, modifier = Modifier.size(14.dp))
+                                                Text("Calendar & History", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
+
+                                    if (deadlineTabMode == "AlertBoard") {
+                                        // ------------------ ALERT BOARD MODE ------------------
+                                        val nowMs = System.currentTimeMillis()
+                                        
+                                        val upcomingDeadlines = deadlinesList.filter { 
+                                            !it.isCompleted && (it.deadlineTimestamp ?: 0) > nowMs 
+                                        }
+                                        
+                                        val overdueDeadlines = deadlinesList.filter { 
+                                            !it.isCompleted && (it.deadlineTimestamp ?: 0) <= nowMs 
+                                        }
+
+                                        LazyColumn(
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                                        ) {
+                                            if (upcomingDeadlines.isEmpty() && overdueDeadlines.isEmpty()) {
+                                                item {
+                                                    EmptyDeadlinesPlaceholder()
+                                                }
+                                            }
+
+                                            // A. Overdue Deadlines Section (Strictly Separated! Not displaying as active)
+                                            if (overdueDeadlines.isNotEmpty()) {
+                                                item {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        modifier = Modifier.padding(bottom = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Warning, contentDescription = "Overdue deadline warning", tint = Color(0xFFD32F2F), modifier = Modifier.size(16.dp))
+                                                        Text(
+                                                            text = "⚠️ Overdue & Pending Tasks (${overdueDeadlines.size})",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFFD32F2F)
+                                                        )
+                                                    }
+                                                }
+                                                items(overdueDeadlines, key = { "overdue_${it.id}" }) { item ->
+                                                    VaultItemCard(
+                                                        item = item,
+                                                        aiReason = "⚠️ Overdue / Missed Deadline",
+                                                        onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
+                                                        onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
+                                                        onToggleHighlight = { viewModel.toggleManualHighlight(item) },
+                                                        onDelete = { viewModel.deleteItem(item.id) },
+                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                    )
+                                                }
+                                                item {
+                                                    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 4.dp))
+                                                }
+                                            }
+
+                                            // B. Active & Upcoming Deadlines Section
+                                            if (upcomingDeadlines.isNotEmpty()) {
+                                                item {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        modifier = Modifier.padding(bottom = 4.dp)
+                                                    ) {
+                                                        Icon(Icons.Default.Notifications, contentDescription = "Active upcoming deadlines", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                                                        Text(
+                                                            text = "⏳ Active Upcoming Deadlines (${upcomingDeadlines.size})",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.primary
+                                                        )
+                                                    }
+                                                }
+                                                items(upcomingDeadlines, key = { "active_dl_${it.id}" }) { item ->
+                                                    VaultItemCard(
+                                                        item = item,
+                                                        aiReason = "🔔 Active Alarm Armed",
+                                                        onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
+                                                        onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
+                                                        onToggleHighlight = { viewModel.toggleManualHighlight(item) },
+                                                        onDelete = { viewModel.deleteItem(item.id) },
+                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                    } else {
+                                        // ------------------ CALENDAR & COMPLETED HISTORY MODE ------------------
+                                        val completedDeadlines = deadlinesList.filter { it.isCompleted }
+                                        var selectedFilterDate by remember { mutableStateOf<Date?>(null) }
+                                        
+                                        val filteredCompletedList = remember(completedDeadlines, selectedFilterDate) {
+                                            if (selectedFilterDate == null) {
+                                                completedDeadlines.sortedByDescending { it.completedTimestamp }
+                                            } else {
+                                                completedDeadlines.filter { item ->
+                                                    val itemCal = Calendar.getInstance()
+                                                    itemCal.timeInMillis = item.completedTimestamp ?: 0
+                                                    val filterCal = Calendar.getInstance()
+                                                    filterCal.time = selectedFilterDate!!
+                                                    itemCal.get(Calendar.YEAR) == filterCal.get(Calendar.YEAR) &&
+                                                            itemCal.get(Calendar.DAY_OF_YEAR) == filterCal.get(Calendar.DAY_OF_YEAR)
+                                                }.sortedByDescending { it.completedTimestamp }
+                                            }
+                                        }
+
+                                        LazyColumn(
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                                        ) {
+                                            item {
+                                                Text(
+                                                    "Completed Deadlines Calendar",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                CompletedTasksCalendarView(
+                                                    completedItems = completedDeadlines,
+                                                    onDayClick = { date ->
+                                                        selectedFilterDate = if (selectedFilterDate != null && 
+                                                            SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(selectedFilterDate!!) == 
+                                                            SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(date)) {
+                                                            null // Toggle off if clicked again
+                                                        } else {
+                                                            date
+                                                        }
+                                                    }
+                                                )
+                                            }
+
+                                            item {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = if (selectedFilterDate == null) {
+                                                            "Completed History Archive (${completedDeadlines.size})"
+                                                        } else {
+                                                            "Completed on ${SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(selectedFilterDate!!)} (${filteredCompletedList.size})"
+                                                        },
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary
+                                                    )
+                                                    if (selectedFilterDate != null) {
+                                                        TextButton(
+                                                            onClick = { selectedFilterDate = null },
+                                                            contentPadding = PaddingValues(0.dp),
+                                                            modifier = Modifier.height(24.dp)
+                                                        ) {
+                                                            Text("Clear Filter", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            if (filteredCompletedList.isEmpty()) {
+                                                item {
+                                                    Card(
+                                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        shape = RoundedCornerShape(12.dp),
+                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                                                    ) {
+                                                        Box(
+                                                            modifier = Modifier.fillMaxWidth().padding(24.dp),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text(
+                                                                "No completed tasks found for this period. Mark deadlines as completed to fill history!",
+                                                                fontSize = 11.sp,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                items(filteredCompletedList, key = { "history_dl_${it.id}" }) { item ->
+                                                    VaultItemCard(
+                                                        item = item,
+                                                        aiReason = "✅ Archive Completed Task",
+                                                        onConfirmDeadline = { viewModel.confirmDeadlineHighlight(item) },
+                                                        onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
+                                                        onToggleHighlight = { viewModel.toggleManualHighlight(item) },
+                                                        onDelete = { viewModel.deleteItem(item.id) },
+                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -828,7 +1063,8 @@ fun VaultApp(viewModel: VaultViewModel) {
                                             },
                                             onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                             onToggleHighlight = { viewModel.toggleManualHighlight(item) },
-                                            onDelete = { viewModel.deleteItem(item.id) }
+                                            onDelete = { viewModel.deleteItem(item.id) },
+                                            onMarkCompleted = { viewModel.markTaskCompleted(item) }
                                         )
                                     }
                                 }
@@ -1604,7 +1840,7 @@ fun AiNecessitySearchCard(
                     placeholder = { Text("e.g. \"show me my coding tips\" or \"is anything due soon?\"", fontSize = 12.sp) },
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .height(56.dp)
                         .testTag("ai_search_input"),
                     shape = RoundedCornerShape(10.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -1632,7 +1868,7 @@ fun AiNecessitySearchCard(
                     enabled = query.isNotBlank() && !isSearching,
                     shape = RoundedCornerShape(10.dp),
                     modifier = Modifier
-                        .height(48.dp)
+                        .height(56.dp)
                         .testTag("ai_search_button")
                 ) {
                     Icon(
@@ -1757,7 +1993,8 @@ fun VaultItemCard(
     onConfirmDeadline: () -> Unit,
     onDeclineDeadline: () -> Unit,
     onToggleHighlight: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onMarkCompleted: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
 
@@ -2169,79 +2406,134 @@ fun VaultItemCard(
                 }
             }
 
-            // If confirmed, view persistent orange alarm indicator strip
-            if (item.isHighlighted && item.deadlineText != null) {
+            // If confirmed as deadline or is deadline content type, show alarm indicator stripe
+            if (((item.isHighlighted && item.deadlineConfirmStatus == "CONFIRMED") || item.contentType == "DEADLINE") && item.deadlineText != null) {
                 Card(
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                        containerColor = if (item.isCompleted) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
                     ),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.weight(1f)
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Notifications,
-                                contentDescription = "Deadline highlighted alert icon",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "⚠️ DEADLINE: ${item.deadlineText}",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.error
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = if (item.isCompleted) Icons.Default.CheckCircle else Icons.Default.Notifications,
+                                    contentDescription = "Deadline Status Icon",
+                                    tint = if (item.isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = if (item.isCompleted) "✅ Task Completed!" else "⚠️ DEADLINE: ${item.deadlineText}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (item.isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                                )
+                            }
                         }
-                        
-                        TextButton(
-                            onClick = {
-                                try {
-                                    val startTimeMs = System.currentTimeMillis() + 3600000 // 1 hour later
-                                    val endTimeMs = startTimeMs + 3600000
-                                    val intent = Intent(Intent.ACTION_INSERT).apply {
-                                        data = Uri.parse("content://com.android.calendar/events")
-                                        putExtra("title", "NotePilot: ${item.title}")
-                                        putExtra("description", "Deadline Alert: ${item.deadlineText}\nSource url/message: ${item.contentOrUrl}\nContext notes: ${item.notes}")
-                                        putExtra("beginTime", startTimeMs)
-                                        putExtra("endTime", endTimeMs)
-                                        putExtra("allDay", false)
-                                        putExtra("hasAlarm", 1)
-                                        putExtra("availability", 0) // Busy Slot
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                    Toast.makeText(context, "Opening Google Calendar to block slot...", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Google Calendar app is not integrated or available.", Toast.LENGTH_SHORT).show()
+
+                        if (!item.isCompleted) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Task Completed Action Button
+                                Button(
+                                    onClick = { onMarkCompleted?.invoke() },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Mark completed icon",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Task Completed",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
                                 }
-                            },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.DateRange,
-                                contentDescription = "Calendar Sync Icon",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                "Block Time",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.error
-                            )
+
+                                // Block Time In Calendar Action Button
+                                OutlinedButton(
+                                    onClick = {
+                                        try {
+                                            val startTimeMs = System.currentTimeMillis() + 3600000 // 1 hour later
+                                            val endTimeMs = startTimeMs + 3600000
+                                            val intent = Intent(Intent.ACTION_INSERT).apply {
+                                                data = Uri.parse("content://com.android.calendar/events")
+                                                putExtra("title", "NotePilot: ${item.title}")
+                                                putExtra("description", "Deadline Alert: ${item.deadlineText}\nSource url/message: ${item.contentOrUrl}\nContext notes: ${item.notes}")
+                                                putExtra("beginTime", startTimeMs)
+                                                putExtra("endTime", endTimeMs)
+                                                putExtra("allDay", false)
+                                                putExtra("hasAlarm", 1)
+                                                putExtra("availability", 0) // Busy Slot
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            context.startActivity(intent)
+                                            Toast.makeText(context, "Opening Google Calendar to block slot...", Toast.LENGTH_SHORT).show()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Google Calendar app is not integrated or available.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DateRange,
+                                        contentDescription = "Calendar Sync Icon",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Block Time",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        } else {
+                            // Render completed date information in small font
+                            if (item.completedTimestamp != null) {
+                                val compDateStr = remember(item.completedTimestamp) {
+                                    val sdf = SimpleDateFormat("MMM d, yyyy • h:mm a", Locale.getDefault())
+                                    sdf.format(Date(item.completedTimestamp))
+                                }
+                                Text(
+                                    text = "Completed on $compDateStr",
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF2E7D32).copy(alpha = 0.7f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(start = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -2877,6 +3169,338 @@ fun NotePilotSettingsDialog(
     }
 }
 
+@Composable
+fun CompletedTasksCalendarView(
+    completedItems: List<VaultItem>,
+    onDayClick: (Date) -> Unit
+) {
+    var currentMonth by remember { mutableStateOf(Calendar.getInstance()) }
+    val daysInMonth = remember(currentMonth) {
+        val cal = currentMonth.clone() as Calendar
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val firstDayOfWeek = cal.get(Calendar.DAY_OF_WEEK) // 1 = Sunday, etc.
+        Pair(maxDays, firstDayOfWeek)
+    }
+
+    val monthYearFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f), RoundedCornerShape(16.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(16.dp))
+            .padding(12.dp)
+    ) {
+        // Month Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = {
+                val cal = currentMonth.clone() as Calendar
+                cal.add(Calendar.MONTH, -1)
+                currentMonth = cal
+            }) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Previous Month")
+            }
+            Text(
+                text = monthYearFormat.format(currentMonth.time),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            IconButton(onClick = {
+                val cal = currentMonth.clone() as Calendar
+                cal.add(Calendar.MONTH, 1)
+                currentMonth = cal
+            }) {
+                Icon(Icons.Default.ArrowForward, contentDescription = "Next Month")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Weekdays Header
+        val weekdays = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        Row(modifier = Modifier.fillMaxWidth()) {
+            weekdays.forEach { dayName ->
+                Text(
+                    text = dayName,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.weight(1f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Days Grid
+        val (maxDays, firstDayOfWeek) = daysInMonth
+        val offset = firstDayOfWeek - 1 // vacant cells at start
+
+        var cellCounter = 0
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            for (row in 0..5) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    for (col in 0..6) {
+                        val cellIndex = cellCounter++
+                        val dayNumber = cellIndex - offset + 1
+                        val isValidDay = dayNumber in 1..maxDays
+
+                        if (isValidDay) {
+                            val cellCal = currentMonth.clone() as Calendar
+                            cellCal.set(Calendar.DAY_OF_MONTH, dayNumber)
+                            
+                            val hasCompletedOnThisDay = completedItems.any { item ->
+                                val itemCal = Calendar.getInstance()
+                                itemCal.timeInMillis = item.completedTimestamp ?: 0
+                                itemCal.get(Calendar.YEAR) == cellCal.get(Calendar.YEAR) &&
+                                        itemCal.get(Calendar.DAY_OF_YEAR) == cellCal.get(Calendar.DAY_OF_YEAR)
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1f)
+                                    .padding(2.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (hasCompletedOnThisDay) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        onDayClick(cellCal.time)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = dayNumber.toString(),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (hasCompletedOnThisDay) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (hasCompletedOnThisDay) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ScrollableTimeColumn(
+    items: List<String>,
+    selectedValue: String,
+    onValueSelected: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier
+) {
+    val listState = rememberLazyListState()
+    
+    // Auto scroll to pre-selected item on initialization
+    LaunchedEffect(selectedValue) {
+        val index = items.indexOf(selectedValue)
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+        }
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f), RoundedCornerShape(12.dp))
+            .padding(vertical = 4.dp)
+    ) {
+        Text(
+            text = label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+            modifier = Modifier.padding(bottom = 4.dp)
+        )
+        
+        Box(
+            modifier = Modifier
+                .height(110.dp)
+                .width(60.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // Selected item center bar
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+            )
+            
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(vertical = 36.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                items(items) { item ->
+                    val isSelected = item == selectedValue
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .clickable { onValueSelected(item) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = item,
+                            fontSize = if (isSelected) 14.sp else 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun InteractiveDatePickerGrid(
+    selectedDate: Date,
+    onDateSelected: (Date) -> Unit
+) {
+    var currentMonth by remember { mutableStateOf(Calendar.getInstance().apply { time = selectedDate }) }
+    val daysInMonth = remember(currentMonth) {
+        val cal = currentMonth.clone() as Calendar
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        val maxDays = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        val firstDayOfWeek = cal.get(Calendar.DAY_OF_WEEK) // 1 = Sunday, etc.
+        Pair(maxDays, firstDayOfWeek)
+    }
+
+    val monthYearFormat = remember { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+            .padding(10.dp)
+    ) {
+        // Month Selector Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(
+                onClick = {
+                    val cal = currentMonth.clone() as Calendar
+                    cal.add(Calendar.MONTH, -1)
+                    currentMonth = cal
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Prev Month", modifier = Modifier.size(16.dp))
+            }
+            Text(
+                text = monthYearFormat.format(currentMonth.time),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            IconButton(
+                onClick = {
+                    val cal = currentMonth.clone() as Calendar
+                    cal.add(Calendar.MONTH, 1)
+                    currentMonth = cal
+                },
+                modifier = Modifier.size(28.dp)
+            ) {
+                Icon(Icons.Default.ArrowForward, contentDescription = "Next Month", modifier = Modifier.size(16.dp))
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Weekdays Header
+        val weekdays = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
+        Row(modifier = Modifier.fillMaxWidth()) {
+            weekdays.forEach { dayName ->
+                Text(
+                    text = dayName,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.weight(1f),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Days Grid
+        val (maxDays, firstDayOfWeek) = daysInMonth
+        val offset = firstDayOfWeek - 1 // vacant cells at start
+
+        var cellCounter = 0
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            for (row in 0..5) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    for (col in 0..6) {
+                        val cellIndex = cellCounter++
+                        val dayNumber = cellIndex - offset + 1
+                        val isValidDay = dayNumber in 1..maxDays
+
+                        if (isValidDay) {
+                            val cellCal = currentMonth.clone() as Calendar
+                            cellCal.set(Calendar.DAY_OF_MONTH, dayNumber)
+                            
+                            val isSelected = remember(selectedDate, cellCal) {
+                                val sCal = Calendar.getInstance().apply { time = selectedDate }
+                                sCal.get(Calendar.YEAR) == cellCal.get(Calendar.YEAR) &&
+                                        sCal.get(Calendar.DAY_OF_YEAR) == cellCal.get(Calendar.DAY_OF_YEAR)
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .aspectRatio(1f)
+                                    .padding(2.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        onDateSelected(cellCal.time)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = dayNumber.toString(),
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddDeadlineDialog(
@@ -2885,7 +3509,22 @@ fun AddDeadlineDialog(
     onConfirm: (title: String, deadlineText: String, contentOrUrl: String, notes: String, blockOnCalendar: Boolean) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
-    var deadlineText by remember { mutableStateOf("") }
+    
+    // Pre-initialize tomorrow 5:00 PM for comfort and convenience
+    val initialCal = Calendar.getInstance().apply {
+        add(Calendar.DAY_OF_YEAR, 1)
+        set(Calendar.HOUR_OF_DAY, 17)
+        set(Calendar.MINUTE, 0)
+    }
+    
+    var selectedDateState by remember { mutableStateOf<Date>(initialCal.time) }
+    var selectedHour by remember { mutableStateOf("05") }
+    var selectedMinute by remember { mutableStateOf("00") }
+    var selectedAmPm by remember { mutableStateOf("PM") }
+
+    var deadlineText by remember { 
+        mutableStateOf(SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()).format(initialCal.time)) 
+    }
     var contentOrUrl by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var blockOnCalendar by remember { mutableStateOf(false) }
@@ -2950,43 +3589,123 @@ fun AddDeadlineDialog(
                     shape = RoundedCornerShape(10.dp)
                 )
 
-                // Date Time input
-                OutlinedTextField(
-                    value = deadlineText,
-                    onValueChange = {
-                        deadlineText = it
-                        if (it.isNotBlank()) isDeadlineError = false
-                    },
-                    label = { Text("Deadline Date & TIme") },
-                    placeholder = { Text("e.g. May 26, 2026 at 5:00 PM") },
-                    isError = isDeadlineError,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("add_deadline_text"),
-                    shape = RoundedCornerShape(10.dp),
-                    trailingIcon = {
-                        IconButton(onClick = {
-                            val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
-                            val calendar = Calendar.getInstance()
-                            calendar.add(Calendar.DAY_OF_YEAR, 1) // Tomorrow
-                            calendar.set(Calendar.HOUR_OF_DAY, 17) // 5 PM
-                            calendar.set(Calendar.MINUTE, 0)
-                            deadlineText = sdf.format(calendar.time)
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.DateRange,
-                                contentDescription = "Prefill Tomorrow 5PM",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                // Date Time Pickers
+                Text(
+                    text = "Select Deadline Date & Time",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                // Calendar Grid
+                InteractiveDatePickerGrid(
+                    selectedDate = selectedDateState,
+                    onDateSelected = { date ->
+                        selectedDateState = date
+                        
+                        val cal = Calendar.getInstance().apply { time = date }
+                        cal.set(Calendar.HOUR, if (selectedHour == "12") 0 else selectedHour.toInt())
+                        cal.set(Calendar.MINUTE, selectedMinute.toInt())
+                        cal.set(Calendar.AM_PM, if (selectedAmPm == "PM") Calendar.PM else Calendar.AM)
+                        
+                        val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                        deadlineText = sdf.format(cal.time)
+                        isDeadlineError = false
                     }
                 )
-                Text(
-                    text = "Tip: Tap deadline calendar symbol to auto-prefill tomorrow 5:00 PM",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 2.dp)
-                )
+
+                // Time Pickers Row
+                val hoursList = remember { (1..12).map { String.format(Locale.US, "%02d", it) } }
+                val minutesList = remember { (0..59).map { String.format(Locale.US, "%02d", it) } }
+                val amPmList = remember { listOf("AM", "PM") }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ScrollableTimeColumn(
+                        items = hoursList,
+                        selectedValue = selectedHour,
+                        onValueSelected = { hour ->
+                            selectedHour = hour
+                            val cal = Calendar.getInstance().apply { time = selectedDateState }
+                            cal.set(Calendar.HOUR, if (hour == "12") 0 else hour.toInt())
+                            cal.set(Calendar.MINUTE, selectedMinute.toInt())
+                            cal.set(Calendar.AM_PM, if (selectedAmPm == "PM") Calendar.PM else Calendar.AM)
+                            
+                            val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                            deadlineText = sdf.format(cal.time)
+                            isDeadlineError = false
+                        },
+                        label = "Hour",
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    ScrollableTimeColumn(
+                        items = minutesList,
+                        selectedValue = selectedMinute,
+                        onValueSelected = { min ->
+                            selectedMinute = min
+                            val cal = Calendar.getInstance().apply { time = selectedDateState }
+                            cal.set(Calendar.HOUR, if (selectedHour == "12") 0 else selectedHour.toInt())
+                            cal.set(Calendar.MINUTE, min.toInt())
+                            cal.set(Calendar.AM_PM, if (selectedAmPm == "PM") Calendar.PM else Calendar.AM)
+                            
+                            val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                            deadlineText = sdf.format(cal.time)
+                            isDeadlineError = false
+                        },
+                        label = "Minute",
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    ScrollableTimeColumn(
+                        items = amPmList,
+                        selectedValue = selectedAmPm,
+                        onValueSelected = { ap ->
+                            selectedAmPm = ap
+                            val cal = Calendar.getInstance().apply { time = selectedDateState }
+                            cal.set(Calendar.HOUR, if (selectedHour == "12") 0 else selectedHour.toInt())
+                            cal.set(Calendar.MINUTE, selectedMinute.toInt())
+                            cal.set(Calendar.AM_PM, if (ap == "PM") Calendar.PM else Calendar.AM)
+                            
+                            val sdf = SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault())
+                            deadlineText = sdf.format(cal.time)
+                            isDeadlineError = false
+                        },
+                        label = "AM/PM",
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Chosen preview strip
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isDeadlineError) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
+                        else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.15f)
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DateRange,
+                            contentDescription = "Deadline calendar integration preview",
+                            tint = if (isDeadlineError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = if (isDeadlineError) "Please choose a deadline timestamp" else "Configured: $deadlineText",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isDeadlineError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
 
                 // Source Link/Text Input (Optional)
                 OutlinedTextField(

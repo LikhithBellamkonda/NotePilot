@@ -236,8 +236,16 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         if (item.deadlineText == null) return
         
         try {
-            val triggerTimeMs = parseDeadlineTimeToMs(item.deadlineText)
-            // If the trigger time is in the past, schedule it 8 seconds in the future
+            val triggerTimeMs = item.deadlineTimestamp ?: parseDeadlineTimeToMs(item.deadlineText)
+            
+            // 1. Save target timestamp cache in Room database if unset
+            if (item.deadlineTimestamp == null) {
+                viewModelScope.launch {
+                    repository.updateItem(item.copy(deadlineTimestamp = triggerTimeMs))
+                }
+            }
+
+            // If the trigger time is in the past, schedule the main exact alarm 8 seconds in the future
             // so they can see the notification/alarm works immediately! This is highly cooperative and excellent UX.
             val finalTriggerTimeMs = if (triggerTimeMs <= System.currentTimeMillis()) {
                 System.currentTimeMillis() + 8000
@@ -246,10 +254,13 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val alarmManager = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+            
+            // ------------------ MAIN EXACT DEADLINE ALARM ------------------
             val intent = android.content.Intent(context, com.example.receiver.DeadlineAlarmReceiver::class.java).apply {
                 putExtra("itemId", item.id)
                 putExtra("itemTitle", item.title)
                 putExtra("deadlineText", item.deadlineText)
+                putExtra("isWarning", false)
             }
             
             val pendingIntent = android.app.PendingIntent.getBroadcast(
@@ -272,9 +283,51 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                     pendingIntent
                 )
             }
-            Log.d(TAG, "Successfully scheduled deadline alarm for item ${item.id} at $finalTriggerTimeMs")
+            Log.d(TAG, "Successfully scheduled main exact deadline alarm for item ${item.id} at $finalTriggerTimeMs")
+
+            // ------------------ 2-HOUR WARNING ONGOING NOTIFICATION ALARM ------------------
+            // Target is exactly 2 hours before the deadline
+            val warningTargetMs = triggerTimeMs - (2 * 3600 * 1000)
+            
+            // If the warning target time is in the past, schedule it 2 seconds in the future
+            // so they can see the non-removable warning notification works and displays immediately! Excellent UX!
+            val finalWarningTriggerMs = if (warningTargetMs <= System.currentTimeMillis()) {
+                System.currentTimeMillis() + 2000
+            } else {
+                warningTargetMs
+            }
+
+            val warningIntent = android.content.Intent(context, com.example.receiver.DeadlineAlarmReceiver::class.java).apply {
+                putExtra("itemId", item.id)
+                putExtra("itemTitle", item.title)
+                putExtra("deadlineText", item.deadlineText)
+                putExtra("isWarning", true) // Mark as warning alarm!
+            }
+
+            val warningPendingIntent = android.app.PendingIntent.getBroadcast(
+                context,
+                item.id + 100000, // Safe unique request code spacing to avoid collision
+                warningIntent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    finalWarningTriggerMs,
+                    warningPendingIntent
+                )
+            } else {
+                alarmManager.set(
+                    android.app.AlarmManager.RTC_WAKEUP,
+                    finalWarningTriggerMs,
+                    warningPendingIntent
+                )
+            }
+            Log.d(TAG, "Successfully scheduled 2-hour warning alarm for item ${item.id} at $finalWarningTriggerMs")
+
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to schedule system alarm for item", e)
+            Log.e(TAG, "Failed to schedule system dual alarms for item", e)
         }
     }
 
@@ -339,9 +392,11 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         contentOrUrl: String,
         notes: String,
         tags: String,
-        deadlineText: String
+        deadlineText: String,
+        deadlineTimestamp: Long? = null
     ) {
         viewModelScope.launch {
+            val ts = deadlineTimestamp ?: parseDeadlineTimeToMs(deadlineText)
             val newItem = VaultItem(
                 contentType = "DEADLINE", // Beautiful specialized content type for custom deadlines!
                 title = title,
@@ -352,7 +407,8 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 isHighlighted = true,
                 hasDeadline = true,
                 deadlineText = deadlineText,
-                deadlineConfirmStatus = "CONFIRMED"
+                deadlineConfirmStatus = "CONFIRMED",
+                deadlineTimestamp = ts
             )
             val generatedId = repository.insertItem(newItem).toInt()
             val insertedItemRef = newItem.copy(id = generatedId)
@@ -425,7 +481,63 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun deleteItem(id: Int) {
         viewModelScope.launch {
+            cancelDeadlineAlarms(id)
             repository.deleteItemById(id)
+        }
+    }
+
+    /**
+     * Cancel scheduled dual system alarms and dismiss ongoing notification badges
+     */
+    fun cancelDeadlineAlarms(itemId: Int) {
+        val context = getApplication<Application>()
+        try {
+            val alarmManager = context.getSystemService(android.content.Context.ALARM_SERVICE) as android.app.AlarmManager
+            val intent = android.content.Intent(context, com.example.receiver.DeadlineAlarmReceiver::class.java)
+            
+            val pendingIntentMain = android.app.PendingIntent.getBroadcast(
+                context,
+                itemId,
+                intent,
+                android.app.PendingIntent.FLAG_NO_CREATE or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntentMain != null) {
+                alarmManager.cancel(pendingIntentMain)
+                pendingIntentMain.cancel()
+            }
+
+            val pendingIntentWarning = android.app.PendingIntent.getBroadcast(
+                context,
+                itemId + 100000,
+                intent,
+                android.app.PendingIntent.FLAG_NO_CREATE or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntentWarning != null) {
+                alarmManager.cancel(pendingIntentWarning)
+                pendingIntentWarning.cancel()
+            }
+            
+            // Also dismiss active notifications
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            notificationManager.cancel(itemId)
+            notificationManager.cancel(itemId + 100000)
+            Log.d(TAG, "Successfully cancelled alarms and notifications for item $itemId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to cancel alarms for item $itemId", e)
+        }
+    }
+
+    /**
+     * Mark deadline task as completed
+     */
+    fun markTaskCompleted(item: VaultItem) {
+        viewModelScope.launch {
+            val updated = item.copy(
+                isCompleted = true,
+                completedTimestamp = System.currentTimeMillis()
+            )
+            repository.updateItem(updated)
+            cancelDeadlineAlarms(item.id)
         }
     }
 
