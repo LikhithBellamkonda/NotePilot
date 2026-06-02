@@ -115,12 +115,20 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
-        // Seed initial interesting content so the user is greeted with a complete product
-        viewModelScope.launch {
+        // Ensure database starts empty of any pre-filled or pre-seeded dummy items
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 repository.prePopulateIfNeeded()
+                
+                // Direct deletion via single query of known previous dummy/sample values from SQLite file
+                val dummyTitles = listOf(
+                    "Mastering Compose Glassmorphic Design",
+                    "Task: Submit final presentation to developer inbox",
+                    "The Gemini Pro AI Advantage in Android development in 60s"
+                )
+                repository.deleteItemsByTitles(dummyTitles)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to seed default content", e)
+                Log.e(TAG, "Error performing dynamic startup cleanup", e)
             }
         }
     }
@@ -234,6 +242,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     fun scheduleDeadlineAlarm(item: VaultItem) {
         val context = getApplication<Application>()
         if (item.deadlineText == null) return
+        
+        // If alarm ringing is disabled, cancel any existing alarms and return
+        if (!item.isAlarmEnabled) {
+            cancelDeadlineAlarms(item.id)
+            return
+        }
         
         try {
             val triggerTimeMs = item.deadlineTimestamp ?: parseDeadlineTimeToMs(item.deadlineText)
@@ -393,6 +407,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         notes: String,
         tags: String,
         deadlineText: String,
+        isAlarmEnabled: Boolean = true,
         deadlineTimestamp: Long? = null
     ) {
         viewModelScope.launch {
@@ -408,11 +423,54 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
                 hasDeadline = true,
                 deadlineText = deadlineText,
                 deadlineConfirmStatus = "CONFIRMED",
-                deadlineTimestamp = ts
+                deadlineTimestamp = ts,
+                isAlarmEnabled = isAlarmEnabled
             )
             val generatedId = repository.insertItem(newItem).toInt()
             val insertedItemRef = newItem.copy(id = generatedId)
             scheduleDeadlineAlarm(insertedItemRef)
+        }
+    }
+
+    /**
+     * Snooze an alarm by adding certain minutes to the trigger time.
+     */
+    fun snoozeDeadlineAlarm(item: VaultItem, snoozeMinutes: Int = 10) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val newTriggerTimeMs = now + (snoozeMinutes * 60 * 1000)
+            
+            // Formulate descriptive snooze text
+            val sdf = java.text.SimpleDateFormat("MMM d, yyyy 'at' h:mm a", java.util.Locale.getDefault())
+            val dateStr = sdf.format(java.util.Date(newTriggerTimeMs))
+            val newDeadlineText = "$dateStr (Snoozed $snoozeMinutes min)"
+            
+            val updated = item.copy(
+                deadlineTimestamp = newTriggerTimeMs,
+                deadlineText = newDeadlineText,
+                isCompleted = false,
+                isAlarmEnabled = true // Re-enable alarm for snooze
+            )
+            repository.updateItem(updated)
+            scheduleDeadlineAlarm(updated)
+            Log.d(TAG, "Snoozed task ${item.id} for $snoozeMinutes minutes to $newTriggerTimeMs")
+        }
+    }
+
+    /**
+     * Toggle alarm configuration (enable or mute)
+     */
+    fun toggleAlarmEnabled(item: VaultItem) {
+        viewModelScope.launch {
+            val updated = item.copy(
+                isAlarmEnabled = !item.isAlarmEnabled
+            )
+            repository.updateItem(updated)
+            if (updated.isAlarmEnabled) {
+                scheduleDeadlineAlarm(updated)
+            } else {
+                cancelDeadlineAlarms(item.id)
+            }
         }
     }
 
@@ -619,48 +677,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             _syncStatus.value = "Downloading secure multi-device backup..."
             kotlinx.coroutines.delay(1200)
 
-            // Dynamic restoration from cloud backup
-            // If empty or populated with defaults, let's inject previous user items
+            // Dynamic restoration from cloud backup (Starting clean as requested)
             val currentItems = allItems.value
-            if (currentItems.size <= 3) {
-                val pastItems = listOf(
-                    VaultItem(
-                        contentType = "REEL",
-                        title = "Mastering Compose Glassmorphic Design",
-                        contentOrUrl = "https://www.instagram.com/reels/compose_glassmorphism/",
-                        notes = "Prisimitic design layout details as requested in OmniFeed style guide.",
-                        tags = "design, interface, kotlin, glass",
-                        isHighlighted = true,
-                        hasDeadline = true,
-                        deadlineText = "Within 4 hours",
-                        deadlineConfirmStatus = "CONFIRMED"
-                    ),
-                    VaultItem(
-                        contentType = "WHATSAPP",
-                        title = "Task: Submit final presentation to developer inbox",
-                        contentOrUrl = "Submit presentation slides by tomorrow evening",
-                        notes = "Approaching WhatsApp deadline automatically caught by server-side Gemini.",
-                        tags = "work, task, study, urgent",
-                        isHighlighted = true,
-                        hasDeadline = true,
-                        deadlineText = "Tomorrow 6 PM",
-                        deadlineConfirmStatus = "CONFIRMED"
-                    ),
-                    VaultItem(
-                        contentType = "SHORT",
-                        title = "The Gemini Pro AI Advantage in Android development in 60s",
-                        contentOrUrl = "https://youtube.com/shorts/gemini_pro_sdk",
-                        notes = "Quick reference guide demonstrating smart contextual tag suggestions.",
-                        tags = "ai, coding, study, reference",
-                        isHighlighted = false,
-                        hasDeadline = false
-                    )
-                )
-                pastItems.forEach { repository.insertItem(it) }
-                _syncStatus.value = "Cloud Sync Active: Restored 3 past saved items successfully."
-            } else {
-                _syncStatus.value = "Cloud Sync Active: Synced ${currentItems.size} items securely with Google Cloud Storage."
-            }
+            _syncStatus.value = "Cloud Sync Active: Synced ${currentItems.size} items securely with Google Cloud Storage."
             _isSyncing.value = false
         }
     }

@@ -18,5 +18,6 @@ data class VaultItem(
     val deadlineConfirmStatus: String = "PENDING", // "PENDING", "CONFIRMED", "DECLINED"
     val isCompleted: Boolean = false,
     val completedTimestamp: Long? = null,
-    val deadlineTimestamp: Long? = null
+    val deadlineTimestamp: Long? = null,
+    val isAlarmEnabled: Boolean = true
 )

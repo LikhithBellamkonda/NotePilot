@@ -18,6 +18,10 @@ class VaultRepository(private val vaultDao: VaultDao) {
         vaultDao.deleteItemById(id)
     }
 
+    suspend fun deleteItemsByTitles(titles: List<String>) {
+        vaultDao.deleteItemsByTitles(titles)
+    }
+
     suspend fun deleteAll() {
         vaultDao.deleteAll()
     }

@@ -20,6 +20,9 @@ interface VaultDao {
     @Query("DELETE FROM vault_items WHERE id = :id")
     suspend fun deleteItemById(id: Int)
 
+    @Query("DELETE FROM vault_items WHERE title IN (:titles)")
+    suspend fun deleteItemsByTitles(titles: List<String>)
+
     @Query("DELETE FROM vault_items")
     suspend fun deleteAll()
 }

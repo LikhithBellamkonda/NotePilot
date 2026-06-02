@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -205,7 +206,7 @@ fun VaultApp(viewModel: VaultViewModel) {
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Text(
-                                "Hello, ${googleUserName ?: "Likhith Bellamkonda"}",
+                                if (isGoogleLoggedIn && !googleUserName.isNullOrBlank()) "Hello, $googleUserName" else "Hello",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -626,7 +627,9 @@ fun VaultApp(viewModel: VaultViewModel) {
                                                     onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                                     onToggleHighlight = { viewModel.toggleManualHighlight(item) },
                                                     onDelete = { viewModel.deleteItem(item.id) },
-                                                    onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                    onMarkCompleted = { viewModel.markTaskCompleted(item) },
+                                                    onSnooze = { viewModel.snoozeDeadlineAlarm(item) },
+                                                    onToggleAlarmEnabled = { viewModel.toggleAlarmEnabled(item) }
                                                 )
                                             }
                                         }
@@ -730,7 +733,9 @@ fun VaultApp(viewModel: VaultViewModel) {
                                                         onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                                         onToggleHighlight = { viewModel.toggleManualHighlight(item) },
                                                         onDelete = { viewModel.deleteItem(item.id) },
-                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) },
+                                                        onSnooze = { viewModel.snoozeDeadlineAlarm(item) },
+                                                        onToggleAlarmEnabled = { viewModel.toggleAlarmEnabled(item) }
                                                     )
                                                 }
                                                 item {
@@ -763,7 +768,9 @@ fun VaultApp(viewModel: VaultViewModel) {
                                                         onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                                         onToggleHighlight = { viewModel.toggleManualHighlight(item) },
                                                         onDelete = { viewModel.deleteItem(item.id) },
-                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                                        onMarkCompleted = { viewModel.markTaskCompleted(item) },
+                                                        onSnooze = { viewModel.snoozeDeadlineAlarm(item) },
+                                                        onToggleAlarmEnabled = { viewModel.toggleAlarmEnabled(item) }
                                                     )
                                                 }
                                             }
@@ -1064,7 +1071,9 @@ fun VaultApp(viewModel: VaultViewModel) {
                                             onDeclineDeadline = { viewModel.declineDeadlineHighlight(item) },
                                             onToggleHighlight = { viewModel.toggleManualHighlight(item) },
                                             onDelete = { viewModel.deleteItem(item.id) },
-                                            onMarkCompleted = { viewModel.markTaskCompleted(item) }
+                                            onMarkCompleted = { viewModel.markTaskCompleted(item) },
+                                            onSnooze = { viewModel.snoozeDeadlineAlarm(item) },
+                                            onToggleAlarmEnabled = { viewModel.toggleAlarmEnabled(item) }
                                         )
                                     }
                                 }
@@ -1176,10 +1185,12 @@ fun VaultApp(viewModel: VaultViewModel) {
         AddDeadlineDialog(
             viewModel = viewModel,
             onDismiss = { showAddDeadlineDialog = false },
-            onConfirm = { title, deadlineText, contentOrUrl, notes, blockOnCalendar ->
-                viewModel.saveDeadlineItem(title, contentOrUrl, notes, "", deadlineText)
+            onConfirm = { title, deadlineText, contentOrUrl, notes, blockOnCalendar, isAlarmEnabled ->
+                viewModel.saveDeadlineItem(title, contentOrUrl, notes, "", deadlineText, isAlarmEnabled)
                 showAddDeadlineDialog = false
-                triggerAlarmChime(context)
+                if (isAlarmEnabled) {
+                    triggerAlarmChime(context)
+                }
                 Toast.makeText(context, "⏰ DEADLINE ARMED SUCCESSFULLY!", Toast.LENGTH_LONG).show()
                 if (blockOnCalendar) {
                     try {
@@ -1366,13 +1377,13 @@ fun SystemSyncScreen(viewModel: VaultViewModel) {
                         }
                         Column {
                             Text(
-                                text = googleUserName ?: "Likhith Bellamkonda",
+                                text = googleUserName ?: "User",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = googleUserEmail ?: "likhithbellamkonda@gmail.com",
+                                text = googleUserEmail ?: "",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1994,7 +2005,9 @@ fun VaultItemCard(
     onDeclineDeadline: () -> Unit,
     onToggleHighlight: () -> Unit,
     onDelete: () -> Unit,
-    onMarkCompleted: (() -> Unit)? = null
+    onMarkCompleted: (() -> Unit)? = null,
+    onSnooze: (() -> Unit)? = null,
+    onToggleAlarmEnabled: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
 
@@ -2408,9 +2421,12 @@ fun VaultItemCard(
 
             // If confirmed as deadline or is deadline content type, show alarm indicator stripe
             if (((item.isHighlighted && item.deadlineConfirmStatus == "CONFIRMED") || item.contentType == "DEADLINE") && item.deadlineText != null) {
+                val isAlarmEnabled = item.isAlarmEnabled
                 Card(
                     colors = CardDefaults.cardColors(
-                        containerColor = if (item.isCompleted) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
+                        containerColor = if (item.isCompleted) Color(0xFFE8F5E9) 
+                                         else if (!isAlarmEnabled) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+                                         else MaterialTheme.colorScheme.error.copy(alpha = 0.08f)
                     ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -2432,26 +2448,82 @@ fun VaultItemCard(
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Icon(
-                                    imageVector = if (item.isCompleted) Icons.Default.CheckCircle else Icons.Default.Notifications,
+                                    imageVector = if (item.isCompleted) Icons.Default.CheckCircle 
+                                                 else if (!isAlarmEnabled) Icons.Default.Notifications
+                                                 else Icons.Default.Notifications,
                                     contentDescription = "Deadline Status Icon",
-                                    tint = if (item.isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error,
+                                    tint = if (item.isCompleted) Color(0xFF2E7D32) 
+                                           else if (!isAlarmEnabled) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                           else MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = if (item.isCompleted) "✅ Task Completed!" else "⚠️ DEADLINE: ${item.deadlineText}",
+                                    text = if (item.isCompleted) "✅ Task Completed!" 
+                                           else if (!isAlarmEnabled) "🔇 DEADLINE (Alarm Off): ${item.deadlineText}"
+                                           else "⚠️ DEADLINE: ${item.deadlineText}",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 11.sp,
-                                    color = if (item.isCompleted) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                                    color = if (item.isCompleted) Color(0xFF2E7D32) 
+                                            else if (!isAlarmEnabled) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                            else MaterialTheme.colorScheme.error
                                 )
                             }
                         }
 
                         if (!item.isCompleted) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                // Snooze Button
+                                if (onSnooze != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onSnooze()
+                                        },
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Snooze Alarm Icon",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Snooze (10m)", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+
+                                // Toggle Alarm Button
+                                if (onToggleAlarmEnabled != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            onToggleAlarmEnabled()
+                                        },
+                                        border = BorderStroke(1.dp, if (isAlarmEnabled) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)),
+                                        colors = ButtonDefaults.outlinedButtonColors(
+                                            contentColor = if (isAlarmEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(30.dp),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Notifications,
+                                            contentDescription = "Toggle Alarm Indicator",
+                                            tint = if (isAlarmEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(if (isAlarmEnabled) "Don't Ring" else "Enable Ring", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
                                 // Task Completed Action Button
                                 Button(
                                     onClick = { onMarkCompleted?.invoke() },
@@ -3506,7 +3578,7 @@ fun InteractiveDatePickerGrid(
 fun AddDeadlineDialog(
     viewModel: VaultViewModel,
     onDismiss: () -> Unit,
-    onConfirm: (title: String, deadlineText: String, contentOrUrl: String, notes: String, blockOnCalendar: Boolean) -> Unit
+    onConfirm: (title: String, deadlineText: String, contentOrUrl: String, notes: String, blockOnCalendar: Boolean, isAlarmEnabled: Boolean) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
     
@@ -3528,6 +3600,7 @@ fun AddDeadlineDialog(
     var contentOrUrl by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var blockOnCalendar by remember { mutableStateOf(false) }
+    var isAlarmEnabled by remember { mutableStateOf(true) }
 
     var isTitleError by remember { mutableStateOf(false) }
     var isDeadlineError by remember { mutableStateOf(false) }
@@ -3733,6 +3806,37 @@ fun AddDeadlineDialog(
 
                 HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
 
+                // Ringing Alarm toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.05f))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Enable Ringing Alarm",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = "Ring high-priority audio alarm with notification when due",
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = isAlarmEnabled,
+                        onCheckedChange = { isAlarmEnabled = it }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 // calendar check
                 Row(
                     modifier = Modifier
@@ -3787,7 +3891,7 @@ fun AddDeadlineDialog(
                                 isDeadlineError = true
                             }
                             if (title.isNotBlank() && deadlineText.isNotBlank()) {
-                                onConfirm(title, deadlineText, contentOrUrl, notes, blockOnCalendar)
+                                onConfirm(title, deadlineText, contentOrUrl, notes, blockOnCalendar, isAlarmEnabled)
                             }
                         },
                         modifier = Modifier.weight(1.5f).testTag("deadline_save_confirm_button"),
@@ -3810,8 +3914,8 @@ fun CustomGoogleLoginDialog(
     onDismiss: () -> Unit,
     onConfirm: (email: String, name: String) -> Unit
 ) {
-    var email by remember { mutableStateOf("likhithbellamkonda@gmail.com") }
-    var name by remember { mutableStateOf("Likhith Bellamkonda") }
+    var email by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
     var isEmailError by remember { mutableStateOf(false) }
     var isNameError by remember { mutableStateOf(false) }
 

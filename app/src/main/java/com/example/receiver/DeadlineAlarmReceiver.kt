@@ -72,6 +72,101 @@ class DeadlineAlarmReceiver : BroadcastReceiver() {
             return
         }
 
+        // Handle Quick Action: Snooze Alarm for 10 mins from notification drawer
+        if (intent.action == "com.example.ACTION_SNOOZE_TASK") {
+            if (itemId != 0) {
+                GlobalScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = AppDatabase.getDatabase(context.applicationContext)
+                        val dao = db.vaultDao()
+                        val item = dao.getItemById(itemId)
+                        if (item != null) {
+                            val newTriggerTimeMs = System.currentTimeMillis() + (10 * 60 * 1000) // Snooze 10 mins
+                            val sdf = java.text.SimpleDateFormat("MMM d, yyyy 'at' h:mm a", java.util.Locale.getDefault())
+                            val dateStr = sdf.format(java.util.Date(newTriggerTimeMs))
+                            val newDeadlineText = "$dateStr (Snoozed 10 min)"
+                            
+                            val updated = item.copy(
+                                deadlineTimestamp = newTriggerTimeMs,
+                                deadlineText = newDeadlineText,
+                                isCompleted = false,
+                                isAlarmEnabled = true
+                            )
+                            dao.updateItem(updated)
+                            
+                            // Schedule new main exact alarm using AlarmManager
+                            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                            val newAlarmIntent = Intent(context, DeadlineAlarmReceiver::class.java).apply {
+                                putExtra("itemId", updated.id)
+                                putExtra("itemTitle", updated.title)
+                                putExtra("deadlineText", updated.deadlineText)
+                            }
+                            val piMainAlarm = PendingIntent.getBroadcast(
+                                context, updated.id, newAlarmIntent,
+                                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                alarmManager.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, newTriggerTimeMs, piMainAlarm)
+                            } else {
+                                alarmManager.setExact(android.app.AlarmManager.RTC_WAKEUP, newTriggerTimeMs, piMainAlarm)
+                            }
+                            
+                            // Dismiss current notifications
+                            notificationManager.cancel(itemId)
+                            notificationManager.cancel(itemId + 100000)
+                            Log.d("DeadlineReceiver", "Task snoozed for 10m from notification action.")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("DeadlineReceiver", "Error snoozing task from broadcast action", e)
+                    }
+                }
+            }
+            return
+        }
+
+        // Handle Quick Action: Mute / Disable Alarm from notification drawer
+        if (intent.action == "com.example.ACTION_MUTE_ALARM") {
+            if (itemId != 0) {
+                GlobalScope.launch(Dispatchers.IO) {
+                    try {
+                        val db = AppDatabase.getDatabase(context.applicationContext)
+                        val dao = db.vaultDao()
+                        val item = dao.getItemById(itemId)
+                        if (item != null) {
+                            val updated = item.copy(
+                                isAlarmEnabled = false
+                            )
+                            dao.updateItem(updated)
+                            
+                            // Cancel system alarm
+                            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                            val cancelIntent = Intent(context, DeadlineAlarmReceiver::class.java)
+                            
+                            val piMain = PendingIntent.getBroadcast(
+                                context, itemId, cancelIntent,
+                                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                            )
+                            piMain?.cancel()
+                            
+                            val piWarn = PendingIntent.getBroadcast(
+                                context, itemId + 100000, cancelIntent,
+                                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+                            )
+                            piWarn?.cancel()
+                            
+                            // Dismiss current notifications
+                            notificationManager.cancel(itemId)
+                            notificationManager.cancel(itemId + 100000)
+                            Log.d("DeadlineReceiver", "Task alarm muted from notification action.")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("DeadlineReceiver", "Error muting alarm from broadcast action", e)
+                    }
+                }
+            }
+            return
+        }
+
         val soundUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
@@ -115,6 +210,32 @@ class DeadlineAlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // Snooze Quick Action intent
+        val snoozeActionIntent = Intent(context, DeadlineAlarmReceiver::class.java).apply {
+            action = "com.example.ACTION_SNOOZE_TASK"
+            putExtra("itemId", itemId)
+            putExtra("itemTitle", itemTitle)
+            putExtra("deadlineText", deadlineText)
+        }
+        val snoozeActionPendingIntent = PendingIntent.getBroadcast(
+            context,
+            itemId + 300000,
+            snoozeActionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Mute Quick Action intent
+        val muteActionIntent = Intent(context, DeadlineAlarmReceiver::class.java).apply {
+            action = "com.example.ACTION_MUTE_ALARM"
+            putExtra("itemId", itemId)
+        }
+        val muteActionPendingIntent = PendingIntent.getBroadcast(
+            context,
+            itemId + 400000,
+            muteActionIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notificationBuilder = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -123,6 +244,16 @@ class DeadlineAlarmReceiver : BroadcastReceiver() {
             .setContentIntent(pendingIntent)
             .setVibrate(longArrayOf(0, 500, 200, 500))
             .clearActions()
+            .addAction(
+                android.R.drawable.ic_menu_today,
+                "Snooze (10m)",
+                snoozeActionPendingIntent
+            )
+            .addAction(
+                android.R.drawable.ic_lock_silent_mode,
+                "Mute",
+                muteActionPendingIntent
+            )
             .addAction(
                 android.R.drawable.checkbox_on_background,
                 "Task Completed",
