@@ -2128,6 +2128,36 @@ fun VaultItemCard(
 
                 Spacer(modifier = Modifier.weight(1f))
 
+                // Read It For Me (TTS) Button
+                IconButton(
+                    onClick = {
+                        try {
+                            val textToRead = buildString {
+                                append(item.title)
+                                append(". ")
+                                if (item.contentOrUrl.isNotBlank() && !item.contentOrUrl.startsWith("http")) {
+                                    append(item.contentOrUrl)
+                                    append(". ")
+                                }
+                                if (item.notes.isNotBlank()) {
+                                    append(item.notes)
+                                }
+                            }
+                            com.example.tts.TTSManager(context).speak(textToRead)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "TTS failed to initialize.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Read item out loud",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
                 // Share Item Button
                 IconButton(
                     onClick = {
@@ -2210,42 +2240,7 @@ fun VaultItemCard(
                          item.contentOrUrl.startsWith("https://", ignoreCase = true)
 
             if (isLink) {
-                // Clickable link row
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f))
-                        .clickable {
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(item.contentOrUrl)).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Invalid link or no browser found", Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = "Open link symbol",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Text(
-                        text = item.contentOrUrl,
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                RichLinkPreview(item = item)
             } else {
                 // Speech bubble text format for messaging
                 Card(
@@ -2683,16 +2678,33 @@ fun AddContentDialog(
         if (initialContent.isNotEmpty()) {
             val linkIndex = initialContent.indexOf("http")
             if (linkIndex != -1) {
-                content = initialContent.substring(linkIndex).trim()
+                // If it contains a link, extract the link as the main content and the rest as notes
+                content = initialContent.substring(linkIndex).substringBefore(" ").substringBefore("\n").trim()
+
                 val prefix = initialContent.substring(0, linkIndex).trim()
-                if (prefix.isNotEmpty()) {
-                    title = prefix.removeSuffix(":").removeSuffix("-").trim()
+                val suffix = initialContent.substringAfter(content).trim()
+                val fullContext = buildString {
+                    if (prefix.isNotBlank()) append(prefix)
+                    if (prefix.isNotBlank() && suffix.isNotBlank()) append("\n")
+                    if (suffix.isNotBlank()) append(suffix)
+                }
+
+                if (fullContext.isNotEmpty()) {
+                    notes = fullContext
+                    title = if (fullContext.length > 40) fullContext.take(37) + "..." else fullContext.lines().firstOrNull() ?: "Imported Shared Content"
                 } else {
                     title = "Imported Shared Content"
                 }
             } else {
+                // For pure text (like standard WhatsApp messages)
                 content = initialContent
                 title = if (initialContent.length > 40) initialContent.take(37) + "..." else initialContent
+
+                // Attempt to extract action items from pure text
+                val lowerContent = initialContent.lowercase()
+                if (lowerContent.contains("buy") || lowerContent.contains("task") || lowerContent.contains("todo") || lowerContent.contains("remind")) {
+                    notes = "Potential Action Item extracted from chat"
+                }
             }
 
             // Intuitive auto categorization
